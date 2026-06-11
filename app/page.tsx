@@ -12,7 +12,7 @@ type Rect = { x: number; y: number; w: number; h: number };
 
 type Wall = Rect & { id: number; kind: WallKind; hp: number; maxHp: number };
 type Terrain = Rect & { id: number; kind: TerrainKind };
-type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss" | "helper"; dir: Dir; speed: number; cooldown: number; aiTimer: number; hp: number; fast?: boolean };
+type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss" | "helper"; dir: Dir; speed: number; cooldown: number; aiTimer: number; hp: number; fast?: boolean; stuckTimer?: number; lastX?: number; lastY?: number };
 type Drone = Rect & { id: string; team: "friendly" | "enemy"; speed: number; cooldown: number; angle: number; spark: number; hp?: number };
 type Bullet = Rect & { id: string; owner: Owner; sourceId: string; dir: Dir; speed: number; vx?: number; vy?: number; dead?: boolean };
 type Explosion = { id: string; x: number; y: number; t: number; life: number; size: number };
@@ -64,16 +64,16 @@ const ROWS = 13;
 const WORLD_W = COLS * CELL;
 const WORLD_H = ROWS * CELL;
 
-const PLAYER_SIZE = 44;
-const ENEMY_SIZE = 42;
-const HELPER_TANK_SIZE = 42;
-const BOSS_SIZE = 50;
-const FRIENDLY_DRONE_SIZE = 30;
-const ENEMY_DRONE_SIZE = 42;
+const PLAYER_SIZE = 40;
+const ENEMY_SIZE = 38;
+const HELPER_TANK_SIZE = 40;
+const BOSS_SIZE = 46;
+const FRIENDLY_DRONE_SIZE = 28;
+const ENEMY_DRONE_SIZE = 0;
 
-const TARGET_KILLS = 20;
+const TARGET_KILLS = 50;
 const ACTIVE_ENEMIES = 4;
-const ENEMY_MAX_HP = 40;
+const ENEMY_MAX_HP = 1;
 const ENEMY_DRONE_MAX_HP = 120;
 const PLAYER_LIVES = 3;
 const PLAYER_HP_PER_LIFE = 10;
@@ -81,21 +81,21 @@ const BOSS_MAX_HP = 160;
 
 const PLAYER_BASE_SPEED = 285;
 const PLAYER_BOOST_SPEED = 380;
-const ENEMY_SPEED = 58;
-const ENEMY_FAST_SPEED = 162;
+const ENEMY_SPEED = 118;
+const ENEMY_FAST_SPEED = 235;
 const TOTAL_FAST_ENEMIES = 4;
 const ACTIVE_FAST_ENEMIES = 2;
 const BOSS_SPEED = 132;
 const FRIENDLY_DRONE_SPEED = 610;
 const ENEMY_DRONE_SPEED = 135;
-const HELPER_TANK_SPEED = 325;
+const HELPER_TANK_SPEED = 350;
 const HELPER_MAX_HP = 20;
-const HELPER_GUARD_RADIUS = 190;
-const HELPER_FIRE_RANGE = 390;
-const HELPER_SUPPORT_RADIUS = 470;
+const HELPER_GUARD_RADIUS = 155;
+const HELPER_FIRE_RANGE = 340;
+const HELPER_SUPPORT_RADIUS = 380;
 const DRONE_MULTI_TARGETS = 4;
 const FRIENDLY_DRONE_TARGET_RANGE = 335;
-const ENEMY_TANK_AGGRO_RANGE = 285;
+const ENEMY_TANK_AGGRO_RANGE = 430;
 const BOSS_DRONE_FIRE_RANGE = 475;
 const FRIENDLY_DRONE_MAX_HP = 80;
 
@@ -246,16 +246,13 @@ function buildTerrain(): Terrain[] {
     terrain.push({ id: id++, kind, x: gx * CELL, y: gy * CELL, w: gw * CELL, h: gh * CELL });
   };
 
-  // Wider battlefield with more grid cells, but smaller tank silhouettes for clearer spacing.
-  rect(2, 1, 4, 1, "grass");
-  rect(15, 1, 4, 1, "grass");
-  rect(2, 10, 4, 2, "grass");
-  rect(15, 10, 4, 2, "grass");
-  rect(8, 5, 5, 3, "grass");
-  rect(5, 4, 1, 2, "water");
-  rect(15, 4, 1, 2, "water");
-  rect(5, 8, 1, 2, "water");
-  rect(15, 8, 1, 2, "water");
+  // Cleaner retro-style layout: a few readable grass and water zones.
+  rect(1, 1, 2, 2, "grass");
+  rect(18, 1, 2, 2, "grass");
+  rect(1, 10, 2, 2, "grass");
+  rect(18, 10, 2, 2, "grass");
+  rect(8, 4, 1, 2, "water");
+  rect(12, 4, 1, 2, "water");
   return terrain;
 }
 
@@ -275,37 +272,44 @@ function buildWalls(): Wall[] {
     for (let y = gy; y < gy + gh; y++) for (let x = gx; x < gx + gw; x++) add(x, y, kind);
   };
 
-  // Big readable cover blocks across a larger grid. Spacing stays open for mobile controls.
-  rect(3, 1, 1, 1, "brick");
-  rect(17, 1, 1, 1, "brick");
-  rect(8, 1, 5, 1, "stone");
-  rect(1, 5, 1, 2, "brick");
-  rect(19, 5, 1, 2, "brick");
-  rect(5, 5, 1, 1, "metal");
-  rect(15, 5, 1, 1, "metal");
-  rect(9, 3, 1, 2, "brick");
-  rect(11, 3, 1, 2, "brick");
-  rect(9, 8, 1, 2, "brick");
-  rect(11, 8, 1, 2, "brick");
-  rect(5, 7, 1, 1, "stone");
-  rect(15, 7, 1, 1, "stone");
-  rect(1, 9, 1, 2, "brick");
-  rect(19, 9, 1, 2, "brick");
-  rect(8, 11, 5, 1, "metal");
-  rect(3, 11, 1, 1, "brick");
-  rect(17, 11, 1, 1, "brick");
-  rect(6, 2, 1, 1, "brick");
-  rect(14, 2, 1, 1, "brick");
-  rect(6, 10, 1, 1, "brick");
-  rect(14, 10, 1, 1, "brick");
+  // Classic arcade-inspired vertical lanes and compact cover.
+  rect(2, 1, 1, 5, "brick");
+  rect(5, 1, 1, 5, "brick");
+  rect(8, 1, 1, 4, "brick");
+  rect(11, 1, 1, 4, "brick");
+  rect(14, 1, 1, 5, "brick");
+  rect(17, 1, 1, 5, "brick");
+
+  rect(7, 6, 1, 1, "brick");
+  rect(10, 6, 1, 1, "brick");
+  rect(3, 7, 2, 1, "brick");
+  rect(13, 7, 2, 1, "brick");
+
+  rect(8, 8, 1, 3, "brick");
+  rect(10, 8, 1, 3, "brick");
+  rect(9, 8, 1, 1, "brick");
+  rect(9, 10, 1, 1, "brick");
+
+  rect(2, 9, 1, 3, "brick");
+  rect(5, 9, 1, 3, "brick");
+  rect(14, 9, 1, 3, "brick");
+  rect(17, 9, 1, 3, "brick");
+
+  rect(8, 11, 3, 1, "brick");
+  rect(9, 12, 1, 1, "brick");
+
+  rect(8, 5, 1, 1, "stone");
+  rect(10, 5, 1, 1, "stone");
+  rect(1, 7, 1, 1, "metal");
+  rect(18, 7, 1, 1, "metal");
 
   const clearZones: Rect[] = [
-    { x: 0, y: 0, w: CELL * 3, h: CELL * 3 },
-    { x: WORLD_W - CELL * 3, y: 0, w: CELL * 3, h: CELL * 3 },
-    { x: 0, y: WORLD_H - CELL * 3, w: CELL * 3, h: CELL * 3 },
-    { x: WORLD_W - CELL * 3, y: WORLD_H - CELL * 3, w: CELL * 3, h: CELL * 3 },
-    { x: CELL * 7, y: CELL * 5, w: CELL * 7, h: CELL * 3 },
-    { x: CELL * 8, y: CELL * 1, w: CELL * 5, h: CELL * 2 },
+    { x: 0, y: 0, w: CELL * 2, h: CELL * 2 },
+    { x: WORLD_W - CELL * 2, y: 0, w: CELL * 2, h: CELL * 2 },
+    { x: 0, y: WORLD_H - CELL * 2, w: CELL * 2, h: CELL * 2 },
+    { x: WORLD_W - CELL * 2, y: WORLD_H - CELL * 2, w: CELL * 2, h: CELL * 2 },
+    { x: CELL * 8, y: CELL * 11, w: CELL * 3, h: CELL * 2 },
+    { x: CELL * 8, y: CELL * 6, w: CELL * 3, h: CELL * 2 },
   ];
   return walls.filter((w) => !clearZones.some((z) => rectsOverlap(w, z)));
 }
@@ -327,6 +331,9 @@ function createHelperTank(player: Tank): Tank {
     cooldown: 0,
     aiTimer: 0,
     hp: HELPER_MAX_HP,
+    stuckTimer: 0,
+    lastX: player.x - CELL * 1.05,
+    lastY: player.y + CELL * 0.85,
   };
 }
 
@@ -360,7 +367,6 @@ function createBossTank(): Tank {
 function createGame(status: Status = "idle", muted = false): Game {
   const player = createPlayer();
   const helper = createHelperTank(player);
-  const boss = createBossTank();
   return {
     status,
     walls: buildWalls(),
@@ -368,11 +374,11 @@ function createGame(status: Status = "idle", muted = false): Game {
     player,
     helper,
     enemies: [],
-    boss,
+    boss: null,
     friendlyDrones: createFriendlyDrones(player),
-    enemyDrone: createEnemyDrone(),
-    enemyDroneHp: ENEMY_DRONE_MAX_HP,
-    enemyDroneDestroyed: false,
+    enemyDrone: null,
+    enemyDroneHp: 0,
+    enemyDroneDestroyed: true,
     enemyDroneAggroTimer: 0,
     missile: null,
     missileLaunched: false,
@@ -385,8 +391,8 @@ function createGame(status: Status = "idle", muted = false): Game {
     kills: 0,
     normalSpawned: 0,
     fastSpawned: 0,
-    bossHp: BOSS_MAX_HP,
-    bossSpawned: true,
+    bossHp: 0,
+    bossSpawned: false,
     playerInvincible: 0,
     seed: 987654321,
     time: 0,
@@ -394,7 +400,7 @@ function createGame(status: Status = "idle", muted = false): Game {
     muted,
     message: "",
     messageTimer: 0,
-    nextPowerMilestone: 3,
+    nextPowerMilestone: 10,
     speedBoostTimer: 0,
   };
 }
@@ -419,7 +425,7 @@ function isTankBlocked(game: Game, tank: Tank, nx: number, ny: number) {
   if (game.walls.some((w) => rectsOverlap(next, w))) return true;
   if (isWaterBlocked(game, next)) return true;
   if (tank.id !== "player" && rectsOverlap(next, tankCollider(game.player))) return true;
-  if (tank.id !== "helper" && rectsOverlap(next, tankCollider(game.helper))) return true;
+  if (game.helper.hp > 0 && tank.id !== "helper" && rectsOverlap(next, tankCollider(game.helper))) return true;
   for (const e of game.enemies) if (e.id !== tank.id && rectsOverlap(next, tankCollider(e))) return true;
   if (game.boss && game.boss.id !== tank.id && rectsOverlap(next, tankCollider(game.boss))) return true;
   return false;
@@ -453,7 +459,7 @@ function isAreaFree(game: Game, r: Rect, allowPlayer = false) {
   if (game.walls.some((w) => rectsOverlap(r, w))) return false;
   if (isWaterBlocked(game, r)) return false;
   if (!allowPlayer && rectsOverlap(r, tankCollider(game.player))) return false;
-  if (rectsOverlap(r, tankCollider(game.helper))) return false;
+  if (game.helper.hp > 0 && rectsOverlap(r, tankCollider(game.helper))) return false;
   if (game.enemies.some((e) => rectsOverlap(r, tankCollider(e)))) return false;
   if (game.boss && rectsOverlap(r, tankCollider(game.boss))) return false;
   return true;
@@ -476,7 +482,7 @@ function spawnNormalEnemies(game: Game) {
     if (!isAreaFree(game, r)) continue;
     const fastCount = game.enemies.filter((e) => e.fast).length;
     const shouldBeFast = game.fastSpawned < TOTAL_FAST_ENEMIES && fastCount < ACTIVE_FAST_ENEMIES;
-    game.enemies.push({ id: `enemy-${game.normalSpawned + 1}`, kind: "enemy", ...r, dir: p.dir, speed: shouldBeFast ? ENEMY_FAST_SPEED : ENEMY_SPEED, cooldown: shouldBeFast ? 0.52 + rand(game) * 0.38 : 0.8 + rand(game) * 0.7, aiTimer: 0.2, hp: ENEMY_MAX_HP, fast: shouldBeFast });
+    game.enemies.push({ id: `enemy-${game.normalSpawned + 1}`, kind: "enemy", ...r, dir: p.dir, speed: shouldBeFast ? ENEMY_FAST_SPEED : ENEMY_SPEED, cooldown: shouldBeFast ? 0.24 + rand(game) * 0.24 : 0.36 + rand(game) * 0.36, aiTimer: 0.2, hp: ENEMY_MAX_HP, fast: shouldBeFast });
     if (shouldBeFast) game.fastSpawned++;
     game.normalSpawned++;
   }
@@ -488,9 +494,9 @@ function spawnBoss(game: Game, audio?: ArcadeAudio | null) {
   game.bossSpawned = true;
   game.bossHp = BOSS_MAX_HP;
   game.bossDelay = 0;
-  game.message = "RED BOSS TANK ACTIVE";
+  game.message = "BOSS TANK ENTERED";
   game.messageTimer = 1.6;
-  game.shake = Math.max(game.shake, 0.3);
+  game.shake = Math.max(game.shake, 0.12);
   audio?.play("boss");
 }
 
@@ -511,8 +517,8 @@ function fireBullet(game: Game, tank: Tank, owner: Owner, audio?: ArcadeAudio | 
   if (tank.dir === "down") y = tank.y + tank.h + 2;
   if (tank.dir === "left") x = tank.x - bw - 2;
   if (tank.dir === "right") x = tank.x + tank.w + 2;
-  game.bullets.push({ id: `b-${performance.now()}-${Math.random()}`, owner, sourceId: tank.id, x, y, w: bw, h: bh, dir: tank.dir, speed: owner === "player" ? 470 : tank.kind === "boss" ? 315 : 235 });
-  tank.cooldown = owner === "player" ? 0.09 : tank.kind === "boss" ? 0.36 : 1.25;
+  game.bullets.push({ id: `b-${performance.now()}-${Math.random()}`, owner, sourceId: tank.id, x, y, w: bw, h: bh, dir: tank.dir, speed: owner === "player" ? 430 : tank.kind === "boss" ? 315 : 235 });
+  tank.cooldown = owner === "player" ? 0.2 : tank.kind === "boss" ? 0.36 : 0.9;
   audio?.play("shoot");
 }
 
@@ -555,9 +561,9 @@ function fireDroneVolley(game: Game, drone: Drone, targets: Rect[], audio?: Arca
 
 function fireHelperBullet(game: Game, helper: Tank, target: Tank, audio?: ArcadeAudio | null) {
   if (helper.cooldown > 0) return;
-  pushAimedBullet(game, "player", helper.id, helper, target, 560, 10);
-  helper.cooldown = 0.24;
-  audio?.play("shoot");
+  if (!aimTankAtTarget(helper, target) || !lineClearBetween(game, helper, target)) return;
+  fireBullet(game, helper, "player", audio);
+  helper.cooldown = 0.34;
 }
 
 function fireBossAimedBullet(game: Game, boss: Tank, target: Rect, audio?: ArcadeAudio | null) {
@@ -581,9 +587,20 @@ function damageFriendlyDrone(game: Game, drone: Drone, amount: number, x: number
     game.friendlyDrones = game.friendlyDrones.filter((item) => item.id !== drone.id);
     game.message = "FRIEND DRONE DOWN";
     game.messageTimer = 1.4;
-    game.shake = Math.max(game.shake, 0.18);
+    game.shake = Math.max(game.shake, 0.08);
     audio?.play("boom");
   }
+}
+
+function destroyHelperTank(game: Game, audio?: ArcadeAudio | null) {
+  if (game.helper.hp <= 0) return;
+  const c = centerOf(game.helper);
+  game.helper.hp = 0;
+  addExplosion(game, c.x, c.y, 64, 0.45);
+  game.message = "HELPER TANK DOWN";
+  game.messageTimer = 1.4;
+  game.shake = Math.max(game.shake, 0.1);
+  audio?.play("boom");
 }
 
 
@@ -628,6 +645,46 @@ function aimAtPlayer(game: Game, tank: Tank) {
   return false;
 }
 
+function aimTankAtTarget(tank: Tank, target: Rect, laneTolerance = CELL * 0.52) {
+  const a = centerOf(tank);
+  const b = centerOf(target);
+  if (Math.abs(a.x - b.x) < laneTolerance) {
+    tank.dir = b.y < a.y ? "up" : "down";
+    return true;
+  }
+  if (Math.abs(a.y - b.y) < laneTolerance) {
+    tank.dir = b.x < a.x ? "left" : "right";
+    return true;
+  }
+  return false;
+}
+
+function lineClearBetween(game: Game, from: Rect, to: Rect, laneTolerance = CELL * 0.52) {
+  const a = centerOf(from);
+  const b = centerOf(to);
+  const sameColumn = Math.abs(a.x - b.x) < laneTolerance;
+  const sameRow = Math.abs(a.y - b.y) < laneTolerance;
+  if (!sameColumn && !sameRow) return false;
+  const ray: Rect = sameColumn
+    ? { x: a.x - 5, y: Math.min(a.y, b.y), w: 10, h: Math.abs(a.y - b.y) }
+    : { x: Math.min(a.x, b.x), y: a.y - 5, w: Math.abs(a.x - b.x), h: 10 };
+  return !game.walls.some((w) => rectsOverlap(ray, w)) && !isWaterBlocked(game, ray);
+}
+
+function chooseAlignPoint(from: Tank, target: Rect) {
+  const a = centerOf(from);
+  const b = centerOf(target);
+  const preferHorizontal = Math.abs(a.x - b.x) > Math.abs(a.y - b.y);
+  if (preferHorizontal) return { x: a.x, y: b.y };
+  return { x: b.x, y: a.y };
+}
+
+function inSameGridLane(a: Rect, b: Rect) {
+  const ac = centerOf(a);
+  const bc = centerOf(b);
+  return Math.abs(ac.x - bc.x) < CELL * 0.48 || Math.abs(ac.y - bc.y) < CELL * 0.48;
+}
+
 function spawnPowerUp(game: Game) {
   const candidates: Rect[] = [
     { x: WORLD_W / 2 - 21, y: WORLD_H / 2 - 21, w: 42, h: 42 },
@@ -648,31 +705,32 @@ function spawnPowerUp(game: Game) {
 }
 
 function damageEnemyTank(game: Game, enemy: Tank, amount: number, audio?: ArcadeAudio | null) {
-  enemy.hp = Math.max(0, enemy.hp - amount);
-  game.shake = Math.max(game.shake, 0.035);
+  enemy.hp = 0;
+  game.shake = Math.max(game.shake, 0.015);
   addExplosion(game, enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, 14);
   audio?.play("hit");
-  if (enemy.hp <= 0) destroyEnemy(game, enemy.id, audio);
+  destroyEnemy(game, enemy.id, audio);
 }
 
 function destroyBossTank(game: Game, audio?: ArcadeAudio | null) {
   if (!game.boss) return;
   const target = centerOf(game.boss);
-  addExplosion(game, target.x, target.y, 96, 0.55);
+  addExplosion(game, target.x, target.y, 110, 0.65);
   game.boss = null;
   game.bossHp = 0;
-  game.bossDelay = 1.4;
-  game.message = "BOSS TANK REFORMING";
-  game.messageTimer = 1.4;
-  game.shake = Math.max(game.shake, 0.48);
-  audio?.play("boom");
+  game.bossSpawned = true;
+  game.message = "BOSS DESTROYED";
+  game.messageTimer = 2.2;
+  game.shake = Math.max(game.shake, 0.2);
+  game.status = "victory";
+  audio?.play("win");
 }
 
 function damageBossTank(game: Game, amount: number, x: number, y: number, audio?: ArcadeAudio | null) {
   if (!game.boss) return;
   game.boss.hp = Math.max(0, game.boss.hp - amount);
   game.bossHp = game.boss.hp;
-  game.shake = Math.max(game.shake, 0.045);
+  game.shake = Math.max(game.shake, 0.02);
   addExplosion(game, x, y, 16);
   audio?.play("hit");
   if (game.boss.hp <= 0) destroyBossTank(game, audio);
@@ -685,9 +743,9 @@ function destroyEnemyDrone(game: Game, audio?: ArcadeAudio | null) {
   game.enemyDrone = null;
   game.enemyDroneHp = 0;
   game.enemyDroneDestroyed = true;
-  game.message = "ENEMY DRONE DESTROYED";
+  game.message = "THREAT CLEARED";
   game.messageTimer = 1.8;
-  game.shake = Math.max(game.shake, 0.4);
+  game.shake = Math.max(game.shake, 0.16);
   audio?.play("boom");
 }
 
@@ -704,14 +762,14 @@ function damageEnemyDrone(game: Game, amount: number, x: number, y: number, audi
 function destroyEnemy(game: Game, enemyId: string, audio?: ArcadeAudio | null) {
   const enemy = game.enemies.find((e) => e.id === enemyId);
   if (!enemy) return;
-  addExplosion(game, enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, 36);
+  addExplosion(game, enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, 30);
   game.enemies = game.enemies.filter((e) => e.id !== enemyId);
   game.kills++;
-  game.shake = 0.12;
+  game.shake = 0.025;
   audio?.play("boom");
-  if (!game.bossSpawned && game.kills >= game.nextPowerMilestone && game.kills < TARGET_KILLS) {
+  if (game.kills >= game.nextPowerMilestone && game.kills < TARGET_KILLS) {
     spawnPowerUp(game);
-    game.nextPowerMilestone += 3;
+    game.nextPowerMilestone += 10;
   }
 }
 
@@ -719,7 +777,7 @@ function damagePlayer(game: Game, audio?: ArcadeAudio | null) {
   if (game.playerInvincible > 0 || game.status !== "playing") return;
   game.playerHp--;
   game.playerInvincible = 0.22;
-  game.shake = 0.12;
+  game.shake = 0.045;
   addExplosion(game, game.player.x + game.player.w / 2, game.player.y + game.player.h / 2, 22);
   if (game.playerHp <= 0) {
     game.lives--;
@@ -740,6 +798,18 @@ function damagePlayer(game: Game, audio?: ArcadeAudio | null) {
   } else {
     audio?.play("hit");
   }
+}
+
+function killPlayerInstantly(game: Game, audio?: ArcadeAudio | null) {
+  if (game.playerInvincible > 0 || game.status !== "playing") return;
+  game.playerHp = 0;
+  game.lives = 0;
+  game.status = "gameover";
+  game.message = "BOSS SHOT";
+  game.messageTimer = 3;
+  game.shake = Math.max(game.shake, 0.18);
+  addExplosion(game, game.player.x + game.player.w / 2, game.player.y + game.player.h / 2, 58, 0.5);
+  audio?.play("lose");
 }
 
 function damageWall(game: Game, wallIndex: number, bulletOwner: Owner, audio?: ArcadeAudio | null) {
@@ -774,9 +844,9 @@ function enemyBulletThreatScore(game: Game, bullet: Bullet) {
 
 function getThreatBullets(game: Game) {
   return game.bullets
-    .filter((b) => b.owner === "enemy" && b.sourceId !== "enemy-drone" && !b.dead)
+    .filter((b) => b.owner === "enemy" && !b.dead)
     .map((b) => ({ bullet: b, score: enemyBulletThreatScore(game, b) }))
-    .filter((x) => x.score < 520)
+    .filter((x) => x.score < 900)
     .sort((a, b) => a.score - b.score)
     .map((x) => x.bullet);
 }
@@ -801,17 +871,25 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
         const friendlyDroneHit = game.friendlyDrones.find((drone) => rectsOverlap(bullet, drone));
         if (friendlyDroneHit) {
           bullet.dead = true;
-          damageFriendlyDrone(game, friendlyDroneHit, bullet.sourceId === "boss" ? 2 : 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
+          damageFriendlyDrone(game, friendlyDroneHit, bullet.sourceId === "boss" ? FRIENDLY_DRONE_MAX_HP : 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
           break;
         }
-        if (bullet.sourceId !== "enemy-drone" && rectsOverlap(bullet, tankCollider(game.helper))) {
+        if (game.helper.hp > 0 && rectsOverlap(bullet, tankCollider(game.helper))) {
           bullet.dead = true;
-          game.helper.cooldown = 0.18;
-          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 18);
-          audio?.play("spark");
+          if (bullet.sourceId === "boss") destroyHelperTank(game, audio);
+          else {
+            game.helper.cooldown = 0.18;
+            addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 18);
+            audio?.play("spark");
+          }
           break;
         }
-        if (rectsOverlap(bullet, tankCollider(game.player))) { bullet.dead = true; damagePlayer(game, audio); break; }
+        if (rectsOverlap(bullet, tankCollider(game.player))) {
+          bullet.dead = true;
+          if (bullet.sourceId === "boss") killPlayerInstantly(game, audio);
+          else damagePlayer(game, audio);
+          break;
+        }
       }
 
       if (bullet.owner === "drone") {
@@ -873,30 +951,41 @@ function updateEnemies(game: Game, dt: number, audio?: ArcadeAudio | null) {
   for (const enemy of game.enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - dt);
     enemy.aiTimer -= dt;
-    const playerDistance = distance(enemy, game.player);
-    const aggro = playerDistance <= ENEMY_TANK_AGGRO_RANGE && !playerIsHiddenFrom(game, enemy);
 
-    if (aggro && lineClearToPlayer(game, enemy) && aimAtPlayer(game, enemy)) fireBullet(game, enemy, "enemy", audio);
+    const seesLane = inSameGridLane(enemy, game.player);
+    const clearShot = seesLane && lineClearBetween(game, enemy, game.player);
+    const playerDistance = distance(enemy, game.player);
+    const active = playerDistance <= ENEMY_TANK_AGGRO_RANGE || seesLane;
+
+    if (clearShot && aimTankAtTarget(enemy, game.player)) {
+      fireBullet(game, enemy, "enemy", audio);
+    }
 
     if (enemy.aiTimer <= 0) {
-      enemy.aiTimer = aggro ? 0.35 + rand(game) * 0.55 : 0.9 + rand(game) * 1.25;
-      const c = centerOf(enemy);
-      const p = centerOf(game.player);
-      if (aggro) {
-        const preferHorizontal = Math.abs(p.x - c.x) > Math.abs(p.y - c.y);
-        enemy.dir = preferHorizontal ? (p.x < c.x ? "left" : "right") : p.y < c.y ? "up" : "down";
+      enemy.aiTimer = active ? 0.16 + rand(game) * 0.18 : 0.28 + rand(game) * 0.28;
+      if (seesLane) {
+        aimTankAtTarget(enemy, game.player);
       } else {
-        enemy.dir = DIRS[Math.floor(rand(game) * DIRS.length)];
+        const alignPoint = chooseAlignPoint(enemy, game.player);
+        const c = centerOf(enemy);
+        enemy.dir = directionFromDelta(alignPoint.x - c.x, alignPoint.y - c.y);
       }
     }
 
-    const shouldMove = aggro || rand(game) < 0.45;
-    if (shouldMove) {
-      const moved = moveTank(game, enemy, aggro ? dt : dt * 0.45);
-      if (!moved) { enemy.dir = DIRS[Math.floor(rand(game) * DIRS.length)]; enemy.aiTimer = 0.12; }
+    if (clearShot) continue;
+
+    const alignPoint = chooseAlignPoint(enemy, game.player);
+    const moved = moveTankTowardPoint(game, enemy, alignPoint.x, alignPoint.y, active ? dt : dt * 0.75);
+    if (!moved) {
+      const pc = centerOf(game.player);
+      const ec = centerOf(enemy);
+      enemy.dir = directionFromDelta(pc.x - ec.x, pc.y - ec.y);
+      moveTank(game, enemy, dt * 0.4);
+      enemy.aiTimer = 0.04;
     }
   }
 }
+
 
 function updateBoss(game: Game, dt: number, audio?: ArcadeAudio | null) {
   const boss = game.boss;
@@ -992,53 +1081,119 @@ function getHelperTankTarget(game: Game): Tank | null {
 }
 
 
+function moveTankTowardPoint(game: Game, tank: Tank, tx: number, ty: number, dt: number) {
+  const c = centerOf(tank);
+  const dx = tx - c.x;
+  const dy = ty - c.y;
+  const primary: Dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
+  const secondary: Dir = Math.abs(dx) > Math.abs(dy) ? (dy < 0 ? "up" : "down") : dx < 0 ? "left" : "right";
+  const fallback: Dir[] = [primary, secondary, secondary === "up" ? "down" : secondary === "down" ? "up" : secondary === "left" ? "right" : "left", primary === "up" ? "down" : primary === "down" ? "up" : primary === "left" ? "right" : "left"];
+
+  for (const dir of fallback) {
+    const beforeX = tank.x;
+    const beforeY = tank.y;
+    tank.dir = dir;
+    if (moveTank(game, tank, dt)) {
+      return Math.hypot(tank.x - beforeX, tank.y - beforeY) > 0.4;
+    }
+  }
+  return false;
+}
+
+function trackHelperStuck(helper: Tank, dt: number) {
+  const moved = Math.hypot(helper.x - (helper.lastX ?? helper.x), helper.y - (helper.lastY ?? helper.y));
+  helper.stuckTimer = moved < 0.7 ? (helper.stuckTimer ?? 0) + dt : 0;
+  helper.lastX = helper.x;
+  helper.lastY = helper.y;
+}
+
+function recoverHelperNearPlayer(game: Game) {
+  const pc = centerOf(game.player);
+  const spots = [
+    { x: pc.x - 70, y: pc.y + 58 },
+    { x: pc.x + 70, y: pc.y + 58 },
+    { x: pc.x - 70, y: pc.y - 58 },
+    { x: pc.x + 70, y: pc.y - 58 },
+    { x: pc.x, y: pc.y + 92 },
+  ];
+
+  for (const spot of spots) {
+    const x = clamp(spot.x - game.helper.w / 2, 8, WORLD_W - game.helper.w - 8);
+    const y = clamp(spot.y - game.helper.h / 2, 8, WORLD_H - game.helper.h - 8);
+    const candidate = { ...game.helper, x, y };
+    if (!isTankBlocked(game, candidate, x, y)) {
+      game.helper.x = x;
+      game.helper.y = y;
+      game.helper.stuckTimer = 0;
+      game.helper.lastX = x;
+      game.helper.lastY = y;
+      return true;
+    }
+  }
+  return false;
+}
+
 function updateHelperTank(game: Game, dt: number, audio?: ArcadeAudio | null) {
   const helper = game.helper;
+  if (helper.hp <= 0) return;
   helper.speed = HELPER_TANK_SPEED;
   helper.cooldown = Math.max(0, helper.cooldown - dt);
 
+  trackHelperStuck(helper, dt);
+
   const pc = centerOf(game.player);
-  const guardX = clamp(pc.x - 88, 8, WORLD_W - helper.w - 8);
-  const guardY = clamp(pc.y + 72, 8, WORLD_H - helper.h - 8);
   const hc = centerOf(helper);
+  const playerDistance = Math.hypot(pc.x - hc.x, pc.y - hc.y);
+  const guardX = clamp(pc.x - 74, 8, WORLD_W - helper.w - 8);
+  const guardY = clamp(pc.y + 64, 8, WORLD_H - helper.h - 8);
   const guardDistance = Math.hypot(guardX - hc.x, guardY - hc.y);
 
+  if (playerDistance > 260 || (helper.stuckTimer ?? 0) > 1.1) {
+    if (playerDistance > 360 || (helper.stuckTimer ?? 0) > 2.0) {
+      recoverHelperNearPlayer(game);
+      return;
+    }
+    moveTankTowardPoint(game, helper, guardX, guardY, dt);
+    return;
+  }
+
   const threats = getThreatBullets(game);
-  const urgentBullet = threats.find((bullet) => distance(helper, bullet) < 170 || distance(game.player, bullet) < 150);
+  const urgentBullet = threats.find((bullet) => distance(helper, bullet) < 160 || distance(game.player, bullet) < 135);
   if (urgentBullet && guardDistance < HELPER_GUARD_RADIUS) {
     const t = centerOf(urgentBullet);
-    helper.dir = directionFromDelta(t.x - hc.x, t.y - hc.y);
-    moveTank(game, helper, dt);
+    if (!moveTankTowardPoint(game, helper, t.x, t.y, dt)) moveTankTowardPoint(game, helper, guardX, guardY, dt);
     if (distance(helper, urgentBullet) < 54) {
       urgentBullet.dead = true;
       helper.cooldown = Math.max(helper.cooldown, 0.12);
-      addExplosion(game, t.x, t.y, 20);
+      addExplosion(game, t.x, t.y, 18);
       audio?.play("spark");
     }
     return;
   }
 
   const target = getHelperTankTarget(game);
-  if (target && guardDistance <= HELPER_GUARD_RADIUS) {
+  if (target && guardDistance <= HELPER_GUARD_RADIUS && distance(game.player, target) < HELPER_SUPPORT_RADIUS) {
     const t = centerOf(target);
-    helper.dir = directionFromDelta(t.x - hc.x, t.y - hc.y);
     const targetDistance = distance(helper, target);
-    const keepDistance = target.fast ? 105 : target.kind === "boss" ? 165 : 130;
-    if (targetDistance > keepDistance && distance(game.player, target) < HELPER_SUPPORT_RADIUS) {
-      const moved = moveTank(game, helper, dt * 0.82);
-      if (!moved) helper.dir = directionFromDelta(guardX - hc.x, guardY - hc.y);
+    const aligned = aimTankAtTarget(helper, target) && lineClearBetween(game, helper, target);
+
+    if (aligned && targetDistance < HELPER_FIRE_RANGE) {
+      fireHelperBullet(game, helper, target, audio);
+      return;
     }
-    if (targetDistance < HELPER_FIRE_RANGE) fireHelperBullet(game, helper, target, audio);
-    return;
+
+    const alignPoint = chooseAlignPoint(helper, target);
+    const stayClose = distance(game.player, target) < HELPER_SUPPORT_RADIUS;
+    if (stayClose && targetDistance > 96) {
+      moveTankTowardPoint(game, helper, alignPoint.x, alignPoint.y, dt * 0.78);
+      return;
+    }
   }
 
-  if (guardDistance > 24) {
-    helper.dir = directionFromDelta(guardX - hc.x, guardY - hc.y);
-    moveTank(game, helper, dt);
+  if (guardDistance > 18) {
+    moveTankTowardPoint(game, helper, guardX, guardY, dt);
   } else if (target) {
-    const t = centerOf(target);
-    helper.dir = directionFromDelta(t.x - hc.x, t.y - hc.y);
-    if (distance(helper, target) < HELPER_FIRE_RANGE) fireHelperBullet(game, helper, target, audio);
+    aimTankAtTarget(helper, target);
   }
 }
 
@@ -1048,59 +1203,33 @@ function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
     d.cooldown = Math.max(0, d.cooldown - dt);
     d.spark = Math.max(0, d.spark - dt);
   }
-  if (game.enemyDrone) {
-    game.enemyDrone.cooldown = Math.max(0, game.enemyDrone.cooldown - dt);
-    game.enemyDrone.spark = Math.max(0, game.enemyDrone.spark - dt);
-  }
 
   const pc = centerOf(game.player);
+  const threats = getThreatBullets(game);
 
-  if (game.enemyDrone) {
-    const red = game.enemyDrone;
-    const nearestFriendly = game.friendlyDrones.reduce((best, d) => distance(d, red) < distance(best, red) ? d : best, game.friendlyDrones[0]);
-    const dronePressure = nearestFriendly && distance(red, nearestFriendly) < 290;
-    if (dronePressure) {
-      const fc = centerOf(nearestFriendly);
-      moveDroneToward(red, fc.x, fc.y, dt, 0.5);
-      if (distance(red, nearestFriendly) < 385) fireEnemyDroneBullet(game, red, nearestFriendly, audio);
-    } else {
-      moveDroneToward(red, pc.x, pc.y, dt, 0.38);
-      if (distance(red, game.player) < 455) fireEnemyDroneBullet(game, red, game.player, audio);
-    }
-  }
-
-  for (let i = 0; i < game.friendlyDrones.length; i++) {
-    const drone = game.friendlyDrones[i];
-    const allTargets = getDroneAttackTargets(game, drone, ACTIVE_ENEMIES);
-    const assignedTargets = allTargets.slice(i * DRONE_MULTI_TARGETS, i * DRONE_MULTI_TARGETS + DRONE_MULTI_TARGETS);
-    const attackTargets = assignedTargets.length > 0 ? assignedTargets : allTargets.slice(0, DRONE_MULTI_TARGETS);
-    const primaryTarget = attackTargets[0];
-
-    if (primaryTarget) {
-      const tc = centerOf(primaryTarget);
-      const sideOffset = game.friendlyDrones.length > 1 ? (i === 0 ? -56 : 56) : 0;
-      const chaseSlow = primaryTarget.fast ? 0.98 : 0.86;
-      moveDroneToward(drone, tc.x + sideOffset, tc.y - 48, dt, chaseSlow);
-      if (attackTargets.some((target) => distance(drone, target) <= FRIENDLY_DRONE_TARGET_RANGE)) fireDroneVolley(game, drone, attackTargets, audio);
-      continue;
-    }
-
-    if (game.enemyDrone && game.enemyDroneAggroTimer > 0) {
-      const ec = centerOf(game.enemyDrone);
-      const ring = game.friendlyDrones.length > 1 ? (i === 0 ? -58 : 58) : 0;
-      moveDroneToward(drone, ec.x + ring, ec.y - 32, dt, 0.92);
-      if (distance(drone, game.enemyDrone) < FRIENDLY_DRONE_TARGET_RANGE) fireDroneBullet(game, drone, game.enemyDrone, audio);
-      if (distance(drone, game.enemyDrone) < 46) {
-        drone.spark = 0.22;
-        game.enemyDrone.spark = 0.22;
-        damageEnemyDrone(game, 1, ec.x, ec.y, audio);
+  for (const drone of game.friendlyDrones) {
+    const immediateHits = threats.filter((bullet) => distance(drone, bullet) < 42 || distance(game.player, bullet) < 38);
+    if (immediateHits.length > 0) {
+      for (const bullet of immediateHits) {
+        const bc = centerOf(bullet);
+        bullet.dead = true;
+        addExplosion(game, bc.x, bc.y, 12);
       }
+      drone.spark = 0.22;
+      audio?.play("spark");
       continue;
     }
 
-    const guardX = pc.x + (game.friendlyDrones.length > 1 ? (i === 0 ? -104 : 104) : 0);
-    const guardY = pc.y + 60;
-    moveDroneToward(drone, guardX, guardY, dt, 0.7);
+    const threat = threats[0];
+    if (threat) {
+      const tc = centerOf(threat);
+      moveDroneToward(drone, tc.x, tc.y, dt, 1.12);
+      continue;
+    }
+
+    const guardX = clamp(pc.x + 46, 10, WORLD_W - drone.w - 10);
+    const guardY = clamp(pc.y - 58, 10, WORLD_H - drone.h - 10);
+    moveDroneToward(drone, guardX, guardY, dt, 0.86);
   }
 }
 
@@ -1132,7 +1261,7 @@ function updateMissile(game: Game, dt: number, audio?: ArcadeAudio | null) {
     game.enemyDroneDestroyed = true;
     game.missile = null;
     game.bossDelay = 1.2;
-    game.message = "ENEMY DRONE DESTROYED";
+    game.message = "THREAT CLEARED";
     game.messageTimer = 1.8;
     game.shake = 0.55;
     audio?.play("boom");
@@ -1155,25 +1284,18 @@ function updateGame(game: Game, input: InputState, dt: number, audio?: ArcadeAud
   updateHelperTank(game, dt, audio);
   updateBullets(game, dt, audio);
   updateMissile(game, dt, audio);
-  if (!game.boss) {
-    game.bossDelay = Math.max(0, game.bossDelay - dt);
-    if (game.bossDelay <= 0) spawnBoss(game, audio);
-  }
 
   for (const p of game.powerUps) p.life -= dt;
   game.powerUps = game.powerUps.filter((p) => p.life > 0);
   for (const e of game.explosions) e.t += dt;
   game.explosions = game.explosions.filter((e) => e.t < e.life);
 
-  if (game.kills >= TARGET_KILLS && game.normalSpawned >= TARGET_KILLS) {
-    if (game.enemies.length === 0 && !game.enemyDrone) {
-      game.status = "victory";
-      game.message = "VICTORY";
-      game.messageTimer = 4;
-      audio?.play("win");
-    }
-  } else {
+  if (game.kills < TARGET_KILLS) {
     spawnNormalEnemies(game);
+  } else if (!game.bossSpawned && !game.boss) {
+    game.enemies = [];
+    game.bullets = game.bullets.filter((b) => b.owner !== "enemy");
+    spawnBoss(game, audio);
   }
 }
 
@@ -1193,65 +1315,124 @@ function drawBlockText(ctx: CanvasRenderingContext2D, text: string, startX: numb
 
 function drawTerrain(ctx: CanvasRenderingContext2D, terrain: Terrain, time: number) {
   if (terrain.kind === "grass") {
-    ctx.fillStyle = "rgba(22, 101, 52, 0.76)";
+    const base = ctx.createLinearGradient(terrain.x, terrain.y, terrain.x, terrain.y + terrain.h);
+    base.addColorStop(0, "rgba(44, 122, 38, 0.72)");
+    base.addColorStop(0.45, "rgba(34, 108, 37, 0.68)");
+    base.addColorStop(1, "rgba(18, 75, 31, 0.72)");
+    ctx.fillStyle = base;
     ctx.fillRect(terrain.x, terrain.y, terrain.w, terrain.h);
-    ctx.fillStyle = "rgba(74, 222, 128, 0.35)";
-    for (let y = terrain.y + 5; y < terrain.y + terrain.h; y += 10) {
-      for (let x = terrain.x + 3; x < terrain.x + terrain.w; x += 12) {
-        const sway = Math.sin(time * 3 + x * 0.1 + y * 0.08) * 2;
-        ctx.fillRect(x + sway, y, 3, 8);
+
+    // Dense vertical blades like real grass, but muted enough for comfort view.
+    for (let y = terrain.y + 4; y < terrain.y + terrain.h + 8; y += 9) {
+      for (let x = terrain.x + 3; x < terrain.x + terrain.w; x += 7) {
+        const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+        const r = n - Math.floor(n);
+        const bladeH = 13 + r * 18;
+        const sway = Math.sin(time * 1.8 + x * 0.08 + y * 0.05) * 1.4;
+        const topX = x + sway + (r - 0.5) * 5;
+        const topY = y - bladeH;
+        ctx.strokeStyle = r > 0.62 ? "rgba(154, 207, 66, 0.58)" : r > 0.32 ? "rgba(79, 169, 55, 0.56)" : "rgba(24, 101, 39, 0.55)";
+        ctx.lineWidth = r > 0.7 ? 2 : 1.35;
+        ctx.beginPath();
+        ctx.moveTo(x, y + 4);
+        ctx.quadraticCurveTo(x + sway, y - bladeH * 0.45, topX, topY);
+        ctx.stroke();
       }
     }
+
+    ctx.fillStyle = "rgba(255,255,255,0.035)";
+    ctx.fillRect(terrain.x, terrain.y, terrain.w, Math.max(2, terrain.h * 0.08));
     return;
   }
-  ctx.fillStyle = "rgba(14, 116, 144, 0.86)";
+
+  const water = ctx.createLinearGradient(terrain.x, terrain.y, terrain.x, terrain.y + terrain.h);
+  water.addColorStop(0, "rgba(37, 155, 190, 0.72)");
+  water.addColorStop(0.5, "rgba(28, 130, 172, 0.68)");
+  water.addColorStop(1, "rgba(18, 91, 136, 0.72)");
+  ctx.fillStyle = water;
   ctx.fillRect(terrain.x, terrain.y, terrain.w, terrain.h);
-  ctx.fillStyle = "rgba(165, 243, 252, 0.45)";
-  for (let y = terrain.y + 8; y < terrain.y + terrain.h; y += 14) {
-    for (let x = terrain.x + 8; x < terrain.x + terrain.w; x += 26) {
-      const wave = Math.sin(time * 4 + x * 0.08) * 3;
-      ctx.fillRect(x + wave, y, 16, 3);
+
+  // Pool-like ripple lines inspired by the reference, softened for less eye strain.
+  ctx.lineWidth = 1.5;
+  for (let y = terrain.y + 10; y < terrain.y + terrain.h; y += 13) {
+    ctx.beginPath();
+    for (let x = terrain.x - 10; x <= terrain.x + terrain.w + 10; x += 8) {
+      const wave = Math.sin(time * 2.4 + x * 0.055 + y * 0.08) * 4 + Math.sin(time * 1.4 + x * 0.025) * 2;
+      const py = y + wave;
+      if (x === terrain.x - 10) ctx.moveTo(x, py);
+      else ctx.lineTo(x, py);
+    }
+    ctx.strokeStyle = "rgba(202, 245, 255, 0.34)";
+    ctx.stroke();
+  }
+
+  for (let x = terrain.x + 8; x < terrain.x + terrain.w; x += 28) {
+    for (let y = terrain.y + 8; y < terrain.y + terrain.h; y += 24) {
+      const glint = Math.sin(time * 3 + x * 0.1 + y * 0.06);
+      if (glint > 0.45) {
+        ctx.fillStyle = "rgba(224, 250, 255, 0.18)";
+        ctx.fillRect(x, y, 10, 2);
+        ctx.fillRect(x + 4, y - 4, 2, 10);
+      }
     }
   }
 }
 
 function drawBrick(ctx: CanvasRenderingContext2D, w: Wall) {
-  ctx.fillStyle = "#b92d10";
+  // Match the reference more closely: clean red bricks with soft white mortar.
+  const mortar = "#ece9e0";
+  const brick = "#a81616";
+  const brickShade = "#921313";
+  const highlight = "rgba(255,255,255,0.12)";
+  const gap = 2;
+  const rows = 4;
+  const rowH = Math.floor((w.h - gap * (rows + 1)) / rows);
+  const fullBrickW = 24;
+  const halfBrickW = 11;
+
+  ctx.fillStyle = mortar;
   ctx.fillRect(w.x, w.y, w.w, w.h);
-  ctx.fillStyle = "#ef6427";
-  ctx.fillRect(w.x + 3, w.y + 3, w.w - 6, 5);
-  ctx.fillRect(w.x + 3, w.y + 19, w.w - 6, 5);
-  ctx.fillRect(w.x + 3, w.y + 35, w.w - 6, 5);
-  ctx.fillStyle = "#66737d";
-  ctx.fillRect(w.x, w.y + 13, w.w, 3);
-  ctx.fillRect(w.x, w.y + 29, w.w, 3);
-  ctx.fillRect(w.x + 20, w.y, 3, 14);
-  ctx.fillRect(w.x + 10, w.y + 16, 3, 14);
-  ctx.fillRect(w.x + 31, w.y + 32, 3, 12);
+
+  for (let row = 0; row < rows; row++) {
+    const y = w.y + gap + row * (rowH + gap);
+    const offset = row % 2 === 0 ? 0 : -(halfBrickW + gap);
+    for (let x = w.x + gap + offset; x < w.x + w.w - gap; x += fullBrickW + gap) {
+      const bx = Math.max(w.x + gap, x);
+      const maxRight = w.x + w.w - gap;
+      const bw = Math.min(row % 2 === 0 ? fullBrickW : (x <= w.x + gap ? halfBrickW : fullBrickW), maxRight - bx);
+      if (bw <= 5) continue;
+      ctx.fillStyle = brick;
+      ctx.fillRect(bx, y, bw, rowH);
+      ctx.fillStyle = highlight;
+      ctx.fillRect(bx, y, bw, 2);
+      ctx.fillStyle = brickShade;
+      ctx.fillRect(bx, y + rowH - 2, bw, 2);
+    }
+  }
 }
 
 function drawStone(ctx: CanvasRenderingContext2D, w: Wall) {
   const ratio = w.hp / w.maxHp;
-  ctx.fillStyle = ratio > 0.5 ? "#a3a8ad" : "#858c94";
+  ctx.fillStyle = ratio > 0.5 ? "#8d969b" : "#727d82";
   ctx.fillRect(w.x, w.y, w.w, w.h);
-  ctx.fillStyle = "#dadde0";
+  ctx.fillStyle = "#bac2c6";
   ctx.fillRect(w.x + 4, w.y + 4, 14, 14);
   ctx.fillRect(w.x + 25, w.y + 5, 13, 13);
   ctx.fillRect(w.x + 5, w.y + 27, 15, 12);
   ctx.fillRect(w.x + 26, w.y + 25, 12, 14);
-  ctx.fillStyle = "#5f676f";
+  ctx.fillStyle = "#515c63";
   ctx.fillRect(w.x, w.y + 20, w.w, 3);
   ctx.fillRect(w.x + 20, w.y, 3, w.h);
 }
 
 function drawMetal(ctx: CanvasRenderingContext2D, w: Wall) {
   const g = ctx.createLinearGradient(w.x, w.y, w.x + w.w, w.y + w.h);
-  g.addColorStop(0, "#f3f5f7");
-  g.addColorStop(0.45, "#9ca5ad");
-  g.addColorStop(1, "#5e6870");
+  g.addColorStop(0, "#c9d0d3");
+  g.addColorStop(0.45, "#858f95");
+  g.addColorStop(1, "#4f5a61");
   ctx.fillStyle = g;
   ctx.fillRect(w.x, w.y, w.w, w.h);
-  ctx.strokeStyle = "#f8fafc";
+  ctx.strokeStyle = "#d8e0e3";
   ctx.lineWidth = 2;
   ctx.strokeRect(w.x + 4, w.y + 4, w.w - 8, w.h - 8);
   ctx.fillStyle = "#434b52";
@@ -1289,25 +1470,25 @@ function drawTankLifeBar(ctx: CanvasRenderingContext2D, game: Game, tank: Tank) 
   if (tank.kind === "player") {
     value = game.playerHp;
     max = PLAYER_HP_PER_LIFE;
-    fill = "#facc15";
+    fill = "#e8c766";
   } else if (tank.kind === "helper") {
     max = HELPER_MAX_HP;
-    fill = "#38bdf8";
+    fill = "#7fbad0";
   } else if (tank.kind === "boss") {
     max = BOSS_MAX_HP;
-    fill = "#fb7185";
+    fill = "#c96b78";
   }
 
   const ratio = clamp(value / Math.max(1, max), 0, 1);
-  const barW = Math.max(34, tank.w * 0.86);
-  const barH = 6;
+  const barW = Math.max(30, tank.w * 0.9);
+  const barH = 5;
   const x = tank.x + tank.w / 2 - barW / 2;
   const y = Math.max(2, tank.y - 11);
 
-  fillRoundedRect(ctx, x - 1, y - 1, barW + 2, barH + 2, 4, "rgba(2,6,23,0.86)");
+  fillRoundedRect(ctx, x - 1, y - 1, barW + 2, barH + 2, 4, "rgba(7,12,12,0.78)");
   fillRoundedRect(ctx, x, y, barW, barH, 3, "rgba(15,23,42,0.9)");
   fillRoundedRect(ctx, x, y, barW * ratio, barH, 3, fill);
-  ctx.strokeStyle = "rgba(255,255,255,0.72)";
+  ctx.strokeStyle = "rgba(238,230,202,0.42)";
   ctx.lineWidth = 1;
   roundedRectPath(ctx, x, y, barW, barH, 3);
   ctx.stroke();
@@ -1331,11 +1512,11 @@ function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invinci
   let lens = "#fff7cf";
 
   if (tank.kind === "enemy") {
-    body = "#f8fafc";
-    body2 = tank.fast ? "#ffffff" : "#e2e8f0";
+    body = "#e2ded3";
+    body2 = tank.fast ? "#f0e6d5" : "#e2e8f0";
     tread = "#475569";
-    stroke = tank.fast ? "#f59e0b" : "#cbd5e1";
-    lens = tank.fast ? "#fb923c" : "#94a3b8";
+    stroke = tank.fast ? "#d89554" : "#b8c0c8";
+    lens = tank.fast ? "#d08a50" : "#8794a3";
   }
   if (tank.kind === "helper") {
     body = "#38bdf8";
@@ -1345,19 +1526,19 @@ function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invinci
     lens = "#ecfeff";
   }
   if (tank.kind === "boss") {
-    body = "#e5314f";
-    body2 = "#ff9aad";
+    body = "#b83245";
+    body2 = "#d87986";
     tread = "#4a0c18";
-    stroke = "#fecdd3";
-    lens = "#fee2e2";
+    stroke = "#d9aab0";
+    lens = "#e7c7c7";
   }
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angle);
 
-  ctx.shadowColor = tank.kind === "player" ? "rgba(250,204,21,0.3)" : tank.fast ? "rgba(251,146,60,0.24)" : "rgba(0,0,0,0.25)";
-  ctx.shadowBlur = tank.kind === "player" || tank.fast ? 12 : 6;
+  ctx.shadowColor = tank.kind === "player" ? "rgba(232,199,102,0.18)" : tank.fast ? "rgba(208,138,80,0.15)" : "rgba(0,0,0,0.18)";
+  ctx.shadowBlur = tank.kind === "player" || tank.fast ? 7 : 4;
 
   fillRoundedRect(ctx, -w * 0.5, -h * 0.42, w * 0.22, h * 0.84, 6, tread);
   fillRoundedRect(ctx, w * 0.28, -h * 0.42, w * 0.22, h * 0.84, 6, tread);
@@ -1372,7 +1553,7 @@ function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invinci
   const gradient = ctx.createLinearGradient(0, -h * 0.42, 0, h * 0.42);
   gradient.addColorStop(0, body2);
   gradient.addColorStop(0.54, body);
-  gradient.addColorStop(1, tank.kind === "enemy" ? "#cbd5e1" : body);
+  gradient.addColorStop(1, tank.kind === "enemy" ? "#b8c0c8" : body);
   roundedRectPath(ctx, -w * 0.31, -h * 0.45, w * 0.62, h * 0.9, 10);
   ctx.fillStyle = gradient;
   ctx.fill();
@@ -1487,7 +1668,7 @@ function drawMissile(ctx: CanvasRenderingContext2D, missile: Missile) {
   ctx.fillRect(-6, -24, 12, 8);
   ctx.fillStyle = "#f97316";
   ctx.fillRect(-7, 12, 14, 16);
-  ctx.fillStyle = "#facc15";
+  ctx.fillStyle = "#e8c766";
   ctx.fillRect(-4, 18, 8, 18);
   ctx.restore();
 }
@@ -1502,41 +1683,63 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
 
   const portrait = cssH > cssW;
   const small = cssW < 900;
-  const safeTop = small ? 92 : 84;
-  const safeBottom = portrait ? 200 : small ? 132 : 58;
-  const availableW = cssW;
-  const availableH = Math.max(160, cssH - safeTop - safeBottom);
-  const fitScale = Math.min(availableW / WORLD_W, availableH / WORLD_H);
-  const readableScale = portrait ? 0.62 : small ? 0.82 : 1;
-  const scale = Math.max(fitScale, readableScale);
-  const viewportW = availableW / scale;
-  const viewportH = availableH / scale;
+  const desktopLayout = !small && !portrait;
+  const safeTop = small ? 92 : 18;
+  const safeBottom = small ? 84 : 18;
+  const safeLeft = desktopLayout ? 190 : 10;
+  const safeRight = desktopLayout ? 190 : 10;
+  const availableW = Math.max(240, cssW - safeLeft - safeRight);
+  const availableH = Math.max(240, cssH - safeTop - safeBottom);
+  const stageSize = desktopLayout ? Math.min(availableH, availableW) : Math.min(availableW, availableH + 40);
+  const stageW = stageSize;
+  const stageH = stageSize;
+  const stageX = desktopLayout ? Math.round(safeLeft + (availableW - stageW) / 2) : Math.round((cssW - stageW) / 2);
+  const stageY = Math.round(safeTop + (availableH - stageH) / 2);
+
+  // Keep a square retro battlefield on desktop, while mobile still fits safely.
+  const minZoom = portrait ? 0.84 : small ? 0.82 : 0.98;
+  const fitHeightZoom = stageH / WORLD_H;
+  const fitWidthZoom = stageW / WORLD_W;
+  const scale = Math.max(Math.min(fitHeightZoom, fitWidthZoom), minZoom);
+  const viewportW = stageW / scale;
+  const viewportH = stageH / scale;
   const pc = centerOf(game.player);
   const cameraX = viewportW >= WORLD_W ? -(viewportW - WORLD_W) / 2 : clamp(pc.x - viewportW / 2, 0, WORLD_W - viewportW);
   const cameraY = viewportH >= WORLD_H ? -(viewportH - WORLD_H) / 2 : clamp(pc.y - viewportH / 2, 0, WORLD_H - viewportH);
-  const ox = -cameraX * scale;
-  const oy = safeTop - cameraY * scale;
-  const shakeX = game.shake > 0 ? Math.sin(game.time * 80) * game.shake * 16 : 0;
-  const shakeY = game.shake > 0 ? Math.cos(game.time * 70) * game.shake * 12 : 0;
+  const ox = stageX - cameraX * scale;
+  const oy = stageY - cameraY * scale;
+  const shakeX = game.shake > 0 ? Math.sin(game.time * 55) * game.shake * 8 : 0;
+  const shakeY = game.shake > 0 ? Math.cos(game.time * 48) * game.shake * 6 : 0;
 
-  ctx.fillStyle = "#020403";
+  ctx.fillStyle = "#08110f";
   ctx.fillRect(0, 0, cssW, cssH);
+  ctx.fillStyle = "rgba(8,17,15,0.9)";
+  ctx.fillRect(stageX, stageY, stageW, stageH);
+  const stageShade = ctx.createLinearGradient(stageX, stageY, stageX, stageY + stageH);
+  stageShade.addColorStop(0, "rgba(255,255,255,0.025)");
+  stageShade.addColorStop(0.5, "rgba(255,255,255,0)");
+  stageShade.addColorStop(1, "rgba(0,0,0,0.22)");
+  ctx.fillStyle = stageShade;
+  ctx.fillRect(stageX, stageY, stageW, stageH);
+  ctx.strokeStyle = "rgba(220,240,230,0.055)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(stageX + 0.5, stageY + 0.5, stageW - 1, stageH - 1);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, safeTop, cssW, availableH);
+  ctx.rect(stageX, stageY, stageW, stageH);
   ctx.clip();
   ctx.translate(ox + shakeX, oy + shakeY);
   ctx.scale(scale, scale);
   ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = "#020403";
+  ctx.fillStyle = "#08110f";
   ctx.fillRect(0, 0, WORLD_W, WORLD_H);
-  ctx.fillStyle = "rgba(255,255,255,0.032)";
+  ctx.fillStyle = "rgba(220,240,230,0.012)";
   drawBlockText(ctx, "SHRIMO", 145, 292, 13, 1);
   drawBlockText(ctx, "INNOVATIONS", 135, 402, 10, 1);
 
   for (const terrain of game.terrain) drawTerrain(ctx, terrain, game.time);
 
-  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  ctx.strokeStyle = "rgba(220,240,230,0.026)";
   ctx.lineWidth = 1;
   for (let x = 0; x <= WORLD_W; x += CELL) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_H); ctx.stroke(); }
   for (let y = 0; y <= WORLD_H; y += CELL) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD_W, y); ctx.stroke(); }
@@ -1558,15 +1761,15 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
     ctx.globalAlpha = 1;
   }
 
-  drawTank(ctx, game, game.helper);
+  if (game.helper.hp > 0) drawTank(ctx, game, game.helper);
   drawTank(ctx, game, game.player, game.playerInvincible > 0);
   for (const enemy of game.enemies) drawTank(ctx, game, enemy);
   if (game.boss) drawTank(ctx, game, game.boss);
 
   for (const b of game.bullets) {
-    ctx.fillStyle = b.sourceId === "helper" ? "#7dd3fc" : b.owner === "player" ? "#ffd35a" : b.owner === "drone" ? "#bfdbfe" : "#67e8f9";
+    ctx.fillStyle = b.sourceId === "helper" ? "rgba(125, 190, 210, 0.82)" : b.owner === "player" ? "rgba(232, 199, 102, 0.86)" : b.owner === "drone" ? "rgba(150, 190, 210, 0.72)" : "rgba(125, 211, 210, 0.72)";
     ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = "rgba(250, 241, 215, 0.52)";
     ctx.fillRect(b.x + 1, b.y + 1, Math.max(2, b.w - 2), Math.max(2, b.h - 2));
   }
 
@@ -1577,27 +1780,27 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
   for (const ex of game.explosions) {
     const p = ex.t / ex.life;
     const s = ex.size * (1 + p * 0.9);
-    ctx.globalAlpha = 1 - p;
+    ctx.globalAlpha = (1 - p) * 0.68;
     ctx.fillStyle = "#fff7a8";
     ctx.fillRect(ex.x - s * 0.2, ex.y - s * 0.2, s * 0.4, s * 0.4);
-    ctx.fillStyle = "#ff7a18";
+    ctx.fillStyle = "#c96f35";
     ctx.fillRect(ex.x - s * 0.5, ex.y - s * 0.08, s, s * 0.16);
     ctx.fillRect(ex.x - s * 0.08, ex.y - s * 0.5, s * 0.16, s);
-    ctx.fillStyle = "#ef233c";
+    ctx.fillStyle = "#a8444a";
     ctx.fillRect(ex.x - s * 0.32, ex.y - s * 0.32, s * 0.2, s * 0.2);
     ctx.fillRect(ex.x + s * 0.16, ex.y + s * 0.16, s * 0.22, s * 0.22);
     ctx.globalAlpha = 1;
   }
 
   if (game.messageTimer > 0) {
-    ctx.fillStyle = "rgba(0,0,0,0.74)";
+    ctx.fillStyle = "rgba(5,10,9,0.74)";
     ctx.fillRect(WORLD_W / 2 - 230, WORLD_H / 2 - 42, 460, 84);
-    ctx.strokeStyle = "#facc15";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(232,199,102,0.65)";
+    ctx.lineWidth = 2;
     ctx.strokeRect(WORLD_W / 2 - 230, WORLD_H / 2 - 42, 460, 84);
-    ctx.fillStyle = "#facc15";
+    ctx.fillStyle = "#e8c766";
     ctx.textAlign = "center";
-    ctx.font = "bold 26px monospace";
+    ctx.font = "bold 24px monospace";
     ctx.fillText(game.message, WORLD_W / 2, WORLD_H / 2 + 9);
   }
 
@@ -1617,10 +1820,8 @@ function snapshot(game: Game) {
     muted: game.muted,
     boost: game.speedBoostTimer,
     drones: game.friendlyDrones.length,
-    helper: "Bodyguard",
+    helper: game.helper.hp > 0 ? "Guard + Support" : "Down",
     fastActive: game.enemies.filter((enemy) => enemy.fast).length,
-    enemyDroneMode: game.enemyDroneAggroTimer > 0 ? "Attacking" : "Patrolling",
-    enemyDrone: game.enemyDrone ? "Active" : game.enemyDroneDestroyed ? "Destroyed" : "Offline",
   };
 }
 
@@ -1830,24 +2031,34 @@ export default function TankarGamePage() {
     <main className="gameShell" onPointerCancel={clearTouch} onContextMenu={(e) => e.preventDefault()}>
       <canvas ref={canvasRef} />
 
-      <section className="hud" aria-label="Game status">
+      <section className="sidePanel leftPanel" aria-label="Game status">
         <div className="brand"><span className="dot" />TANKAR</div>
-        <div className="stats">
-          <span>Lives: {hud.lives}/3</span>
-          <span>HP: {hud.hp}/10</span>
-          <span>Kills: {hud.kills}/20</span>
-          <span>Enemy Tanks: {hud.active}/4</span>
-          <span className="assistantOk">Friend Drone: {hud.drones}</span>
-          <span className="boost">Fast Tanks: {hud.fastActive}/4</span>
-          <span className="boss">Boss: {hud.bossActive ? `${hud.bossHp}/160` : "Respawn"}</span>
-          <span className="helperOk">Helper Tank: {hud.helper}</span>
-          <span className={hud.enemyDrone === "Active" ? "enemyDrone" : "assistantDown"}>Enemy Drone: {hud.enemyDrone}{hud.enemyDrone === "Active" ? ` · ${hud.enemyDroneMode}` : ""}</span>
-          {hud.boost > 0 && <span className="boost">Boost: {hud.boost.toFixed(1)}s</span>}
+        <div className="panelGroup">
+          <div className="sectionTitle">Status</div>
+          <div className="stats stack">
+            <span>Lives: {hud.lives}/3</span>
+            <span>HP: {hud.hp}/10</span>
+            <span>Kills: {hud.kills}/50</span>
+            <span>Enemy Tanks: {hud.active}/4</span>
+            <span className="boost">Fast Tanks: {hud.fastActive}/4</span>
+            <span className="boss">Boss: {hud.bossActive ? `${hud.bossHp}/160` : hud.kills >= 50 ? "Ready" : "Locked"}</span>
+            {hud.boost > 0 && <span className="boost">Boost: {hud.boost.toFixed(1)}s</span>}
+          </div>
         </div>
-        <div className="actions">
-          <button onClick={toggleMute}>{hud.muted ? "Unmute" : "Mute"}</button>
-          <button onClick={togglePause}>{hud.status === "paused" ? "Resume" : "Pause"}</button>
-          <button onClick={toggleFullscreen}>Full</button>
+      </section>
+
+      <section className="sidePanel rightPanel" aria-label="Game controls and rules">
+        <div className="panelGroup">
+          <div className="sectionTitle">Controls</div>
+          <div className="actions columnActions">
+            <button onClick={toggleMute}>{hud.muted ? "Unmute" : "Mute"}</button>
+            <button onClick={togglePause}>{hud.status === "paused" ? "Resume" : "Pause"}</button>
+            <button onClick={toggleFullscreen}>Full</button>
+          </div>
+        </div>
+        <div className="panelGroup helperInfo">
+          <div className="sectionTitle">Battle</div>
+          <p>Square field. 50 kills unlock the boss. Enemy tanks hunt your row or column and attack when they get a lane.</p>
         </div>
       </section>
 
@@ -1865,7 +2076,7 @@ export default function TankarGamePage() {
         </div>
       </section>
 
-      <section className="help">Move only: WASD/Arrows or mobile D-pad · player auto-fires · 4 enemy tanks active · only one red boss tank · helper guards nearby and attacks · Fullscreen: F</section>
+      <section className="help">Square arcade field · use movement only · player auto-fires · enemies hunt your lane · boss unlocks at 50 kills</section>
       <section className="rotateHint">Rotate for best gameplay</section>
 
       {!loaderReady && (
@@ -1873,7 +2084,7 @@ export default function TankarGamePage() {
           <div className="panel loaderPanel">
             <p className="eyebrow">Loading Game</p>
             <h1>TANKAR</h1>
-            <p>Loading the larger grid battlefield, 1 circular friend drone, 1 enemy drone, 4 active white enemy tanks, one always-active red boss tank, close-guard helper tank, readable walls, controls, and safety information.</p>
+            <p>Loading a square arcade battlefield with side panels, 4 enemy tanks, and a 50-kill boss unlock.</p>
             <div className="loaderBar"><span /></div>
             <nav className="policyLinks" aria-label="Game policy links">
               <a href="terms/">Terms</a>
@@ -1897,7 +2108,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Desktop · Mobile · Android TV</p>
                 <h1>TANKAR BATTLE</h1>
-                <p>Destroy 20 white enemy tanks while one red boss tank stays active. Enemy tanks only target you when close, the helper stays around your golden tank, and the helper can attack fast tanks, the boss, and nearby enemies.</p>
+                <p>Destroy 50 white enemy tanks, then face the red boss tank. Enemy tanks now actively hunt your lane and attack when they line up with your tank.</p>
                 {!captchaVerified ? (
                   <div className="captchaBox" role="group" aria-label="Math access check">
                     <strong>Math Access Check</strong>
@@ -1944,7 +2155,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Mission failed</p>
                 <h1>GAME OVER</h1>
-                <p>You lost all 3 lives. Restart and clear the full enemy wave.</p>
+                <p>You lost all 3 lives. Restart and clear the enemy wave, then defeat the boss.</p>
                 <button className="primary" onClick={startGame} autoFocus>Restart</button>
               </>
             )}
@@ -1952,7 +2163,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Mission complete</p>
                 <h1>VICTORY</h1>
-                <p>You destroyed 20 enemy tanks, cleared the drone threat, and survived the single red boss tank pressure.</p>
+                <p>You destroyed 50 enemy tanks and survived the boss pressure.</p>
                 <button className="primary" onClick={startGame} autoFocus>Play Again</button>
               </>
             )}
@@ -1962,42 +2173,54 @@ export default function TankarGamePage() {
 
       <style jsx global>{`
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #020403; overscroll-behavior: none; }
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #08110f; overscroll-behavior: none; }
         body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
         button { font: inherit; user-select: none; touch-action: none; }
-        button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; box-shadow: 0 0 0 7px rgba(250, 204, 21, 0.35); }
+        button:focus-visible { outline: 3px solid #f3ead1; outline-offset: 3px; box-shadow: 0 0 0 7px rgba(250, 204, 21, 0.35); }
         .gameShell {
           position: fixed; inset: 0; overflow: hidden; color: white; touch-action: none;
           padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-          background: radial-gradient(circle at 50% 20%, rgba(255, 195, 67, 0.12), transparent 30%), radial-gradient(circle at 70% 70%, rgba(103, 232, 249, 0.08), transparent 35%), #020403;
+          background: radial-gradient(circle at 50% 20%, rgba(255, 195, 67, 0.12), transparent 30%), radial-gradient(circle at 70% 70%, rgba(103, 232, 249, 0.08), transparent 35%), #08110f;
         }
         canvas { position: absolute; inset: 0; width: 100vw; height: 100vh; image-rendering: pixelated; }
-        .hud {
-          position: absolute; z-index: 5; top: max(12px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
-          width: min(1220px, calc(100vw - 24px)); min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-          padding: 10px 12px 10px 16px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(8, 12, 15, 0.82); backdrop-filter: blur(14px); box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+
+        .sidePanel {
+          position: absolute; z-index: 5; top: 18px; bottom: 18px; width: 174px; padding: 14px 12px;
+          border: 1px solid rgba(255,255,255,0.12); background: rgba(9, 18, 16, 0.9); backdrop-filter: blur(12px);
+          box-shadow: 0 18px 60px rgba(0,0,0,0.45); display: flex; flex-direction: column; gap: 14px; justify-content: flex-start;
+        }
+        .leftPanel { left: 14px; }
+        .rightPanel { right: 14px; }
+        .panelGroup { display: grid; gap: 10px; }
+        .sectionTitle {
+          font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #e8c766;
+          border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 8px;
+        }
+        .stack { flex-direction: column; align-items: stretch; justify-content: flex-start; }
+        .stack span { width: 100%; text-align: left; }
+        .columnActions { flex-direction: column; }
+        .columnActions button { width: 100%; min-height: 44px; }
+        .helperInfo p { margin: 0; color: rgba(255,255,255,0.72); line-height: 1.6; font-size: 12px; }
+        .help {
+          position: absolute; z-index: 4; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+          width: min(660px, calc(100vw - 420px)); padding: 8px 12px; text-align: center; font-size: 11px; line-height: 1.45;
+          color: rgba(255,255,255,0.68); border: 1px solid rgba(255,255,255,0.08); background: rgba(5,10,9,0.42); backdrop-filter: blur(8px);
         }
         .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; letter-spacing: 0.18em; text-shadow: 2px 2px 0 #7f1d1d; white-space: nowrap; }
-        .dot { width: 12px; height: 12px; background: #facc15; box-shadow: 0 0 0 4px rgba(250,204,21,0.18); }
-        .stats { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 7px; font-size: 12px; }
-        .stats span { padding: 7px 9px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9); }
+        .dot { width: 12px; height: 12px; background: #d8bd63; box-shadow: 0 0 0 4px rgba(216,189,99,0.12); }
+        .stats { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+        .stats span { padding: 6px 8px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9); }
         .stats .boss { color: #fecdd3; border-color: rgba(248,113,113,0.45); background: rgba(127,29,29,0.45); }
         .stats .boost { color: #dbeafe; border-color: rgba(96,165,250,0.45); background: rgba(30,64,175,0.45); }
         .stats .assistantOk { color: #bbf7d0; border-color: rgba(74,222,128,0.38); background: rgba(20,83,45,0.48); }
         .stats .helperOk { color: #bae6fd; border-color: rgba(56,189,248,0.42); background: rgba(7,89,133,0.48); }
         .stats .assistantDown { color: #fed7aa; border-color: rgba(251,146,60,0.38); background: rgba(124,45,18,0.48); }
-        .stats .enemyDrone { color: #fecdd3; border-color: rgba(244,63,94,0.42); background: rgba(127,29,29,0.48); }
-        .actions { display: flex; gap: 8px; }
-        .actions button, .primary, .mini, .pad, .fire { border: 0; color: #07100b; background: #facc15; cursor: pointer; box-shadow: inset 0 -3px 0 rgba(0,0,0,0.22); transition: transform 140ms ease, filter 140ms ease; }
-        .actions button { padding: 10px 12px; }
-        .actions button:hover, .primary:hover, .mini:hover, .pad:hover, .fire:hover { transform: translateY(-1px); filter: brightness(1.08); }
-        .help {
-          position: absolute; z-index: 4; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(1120px, calc(100vw - 24px)); padding: 9px 12px; text-align: center; font-size: 11px;
-          line-height: 1.45; color: rgba(255,255,255,0.72); border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.52); backdrop-filter: blur(10px);
-        }
-        .touchControls { position: absolute; z-index: 6; inset: auto 0 max(44px, calc(env(safe-area-inset-bottom) + 42px)) 0; display: none; justify-content: space-between; align-items: flex-end; pointer-events: none; padding: 0 18px; }
+        .actions { display: flex; gap: 7px; }
+        .actions button, .primary, .mini, .pad, .fire { border: 0; color: #07100b; background: #d8bd63; cursor: pointer; box-shadow: inset 0 -3px 0 rgba(0,0,0,0.22); transition: transform 140ms ease, filter 140ms ease; }
+        .actions button { padding: 8px 11px; }
+        .actions button:hover, .primary:hover, .mini:hover, .pad:hover, .fire:hover { transform: translateY(-1px); filter: brightness(1.08); }        .touchControls { position: absolute; z-index: 6; inset: auto 0 max(44px, calc(env(safe-area-inset-bottom) + 42px)) 0; display: none; justify-content: space-between; align-items: flex-end; pointer-events: none; padding: 0 18px; }
         .dpad { position: relative; width: 168px; height: 168px; pointer-events: auto; }
-        .pad, .fire, .mini { min-width: 56px; min-height: 56px; border-radius: 18px; background: rgba(250,204,21,0.88); font-weight: 900; }
+        .pad, .fire, .mini { min-width: 56px; min-height: 56px; border-radius: 18px; background: rgba(216,189,99,0.86); font-weight: 900; }
         .pad { position: absolute; width: 56px; height: 56px; }
         .pad.up { left: 56px; top: 0; }
         .pad.left { left: 0; top: 56px; }
@@ -2005,22 +2228,22 @@ export default function TankarGamePage() {
         .pad.down { left: 56px; bottom: 0; }
         .fireCluster { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; pointer-events: auto; align-items: end; }
         .compactActions { max-width: 148px; }
-        .autoFireBadge { grid-column: span 2; min-height: 58px; border-radius: 999px; display: grid; place-items: center; padding: 0 16px; font-weight: 1000; letter-spacing: 0.12em; color: #fde68a; border: 1px solid rgba(250,204,21,0.42); background: linear-gradient(135deg, rgba(120,53,15,0.88), rgba(30,41,59,0.92)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 16px 30px rgba(0,0,0,0.28); text-shadow: 1px 1px 0 rgba(0,0,0,0.38); }
+        .autoFireBadge { grid-column: span 2; min-height: 58px; border-radius: 999px; display: grid; place-items: center; padding: 0 16px; font-weight: 1000; letter-spacing: 0.12em; color: #e3cd82; border: 1px solid rgba(216,189,99,0.28); background: linear-gradient(135deg, rgba(120,53,15,0.88), rgba(30,41,59,0.92)); box-shadow: inset 0 0 0 1px rgba(220,240,230,0.055), 0 16px 30px rgba(0,0,0,0.28); text-shadow: 1px 1px 0 rgba(0,0,0,0.38); }
         .mini { min-width: 62px; min-height: 48px; border-radius: 14px; font-size: 11px; }
         .rotateHint { display: none; position: absolute; z-index: 7; right: 14px; top: 104px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.58); color: rgba(255,255,255,0.76); font-size: 11px; }
         .overlay { position: absolute; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.72)), repeating-linear-gradient(0deg, rgba(255,255,255,0.035), rgba(255,255,255,0.035) 1px, transparent 1px, transparent 5px); }
-        .panel { width: min(590px, 100%); padding: 34px; text-align: center; border: 1px solid rgba(250,204,21,0.45); background: rgba(5,8,11,0.9); box-shadow: 0 30px 90px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.08); }
-        .eyebrow { margin: 0 0 12px; color: #facc15; font-size: 12px; text-transform: uppercase; letter-spacing: 0.18em; }
-        h1 { margin: 0; font-size: clamp(42px, 7vw, 82px); line-height: 0.9; color: #fff; text-shadow: 4px 4px 0 #7f1d1d; }
+        .panel { width: min(590px, 100%); padding: 34px; text-align: center; border: 1px solid rgba(216,189,99,0.32); background: rgba(5,8,11,0.9); box-shadow: 0 30px 90px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(220,240,230,0.055); }
+        .eyebrow { margin: 0 0 12px; color: #e8c766; font-size: 12px; text-transform: uppercase; letter-spacing: 0.18em; }
+        h1 { margin: 0; font-size: clamp(42px, 7vw, 82px); line-height: 0.9; color: #f3ead1; text-shadow: 4px 4px 0 #7f1d1d; }
         .panel p:not(.eyebrow) { margin: 18px auto 24px; max-width: 500px; color: rgba(255,255,255,0.74); line-height: 1.65; font-size: 15px; }
         .primary { min-width: 190px; min-height: 56px; padding: 12px 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; border-radius: 16px; }
         .loaderPanel { overflow: hidden; }
-        .loaderBar { width: min(360px, 100%); height: 10px; margin: 18px auto 18px; border: 1px solid rgba(250,204,21,0.45); background: rgba(255,255,255,0.08); }
-        .loaderBar span { display: block; width: 100%; height: 100%; background: linear-gradient(90deg, #facc15, #fb7185, #60a5fa); transform-origin: left; animation: loadSweep 1.25s ease both; }
+        .loaderBar { width: min(360px, 100%); height: 10px; margin: 18px auto 18px; border: 1px solid rgba(216,189,99,0.32); background: rgba(220,240,230,0.055); }
+        .loaderBar span { display: block; width: 100%; height: 100%; background: linear-gradient(90deg, #e8c766, #fb7185, #60a5fa); transform-origin: left; animation: loadSweep 1.25s ease both; }
         .policyLinks { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
-        .policyLinks a { color: #fef3c7; text-decoration: none; border: 1px solid rgba(250,204,21,0.28); background: rgba(250,204,21,0.08); padding: 7px 9px; font-size: 11px; }
-        .policyLinks a:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
-        .policyLinks a:hover { background: rgba(250,204,21,0.16); }
+        .policyLinks a { color: #e9ddbd; text-decoration: none; border: 1px solid rgba(250,204,21,0.28); background: rgba(216,189,99,0.06); padding: 7px 9px; font-size: 11px; }
+        .policyLinks a:focus-visible { outline: 3px solid #f3ead1; outline-offset: 2px; }
+        .policyLinks a:hover { background: rgba(216,189,99,0.1); }
         .policyLinks.compact { margin-top: 18px; }
         .legalNote { font-size: 11px !important; line-height: 1.55 !important; color: rgba(255,255,255,0.6) !important; margin-bottom: 0 !important; }
         @keyframes loadSweep { from { transform: scaleX(0.04); } to { transform: scaleX(1); } }
@@ -2029,13 +2252,13 @@ export default function TankarGamePage() {
           margin: 18px auto 18px; width: min(430px, 100%); padding: 18px; display: grid; gap: 12px;
           border: 1px solid rgba(250,204,21,0.34); background: rgba(255,255,255,0.055); text-align: center;
         }
-        .captchaBox strong { color: #facc15; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; }
-        .captchaQuestion { font-size: clamp(26px, 6vw, 42px); font-weight: 900; color: #fff; text-shadow: 3px 3px 0 #7f1d1d; }
+        .captchaBox strong { color: #e8c766; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; }
+        .captchaQuestion { font-size: clamp(26px, 6vw, 42px); font-weight: 900; color: #f3ead1; text-shadow: 3px 3px 0 #7f1d1d; }
         .captchaBox input {
-          width: 100%; min-height: 54px; border: 1px solid rgba(255,255,255,0.18); background: rgba(0,0,0,0.48); color: #fff;
+          width: 100%; min-height: 54px; border: 1px solid rgba(255,255,255,0.18); background: rgba(0,0,0,0.48); color: #f3ead1;
           padding: 12px 14px; font: inherit; font-size: 22px; text-align: center; outline: none;
         }
-        .captchaBox input:focus { border-color: #facc15; box-shadow: 0 0 0 4px rgba(250,204,21,0.18); }
+        .captchaBox input:focus { border-color: #e8c766; box-shadow: 0 0 0 4px rgba(216,189,99,0.12); }
         .captchaError { color: #fecaca; line-height: 1.45; }
         .captchaNote { color: rgba(255,255,255,0.6); line-height: 1.5; }
         .captchaActions { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -2045,10 +2268,19 @@ export default function TankarGamePage() {
 
         @media (max-width: 920px), (pointer: coarse) {
           .touchControls { display: flex; }
-          .help { font-size: 10px; bottom: max(8px, env(safe-area-inset-bottom)); }
-          .hud { top: max(8px, env(safe-area-inset-top)); width: calc(100vw - 16px); min-height: 76px; flex-direction: column; align-items: stretch; padding: 8px; gap: 7px; }
+          .sidePanel {
+            top: max(8px, env(safe-area-inset-top)); bottom: auto; width: calc(100vw - 12px); min-height: 66px;
+            left: 6px; right: 6px; padding: 7px; gap: 6px;
+          }
+          .rightPanel { top: auto; bottom: max(70px, calc(env(safe-area-inset-bottom) + 56px)); }
+          .panelGroup { gap: 6px; }
+          .stack { flex-direction: row; flex-wrap: wrap; }
+          .stack span { width: auto; text-align: center; }
+          .columnActions { flex-direction: row; }
+          .columnActions button { width: auto; min-height: 40px; padding: 8px 10px; }
+          .helperInfo { display: none; }
+          .help { font-size: 10px; bottom: max(6px, env(safe-area-inset-bottom)); width: calc(100vw - 16px); }
           .brand, .actions, .stats { justify-content: center; }
-          .actions button { min-height: 40px; padding: 8px 10px; }
           .stats { font-size: 10px; gap: 5px; }
           .stats span { padding: 5px 7px; }
           .panel { padding: 24px; }
@@ -2066,7 +2298,7 @@ export default function TankarGamePage() {
           .mini { min-width: 52px; min-height: 44px; }
           .help { display: none; }
         }
-        @media (min-width: 1200px) and (min-height: 680px) { .stats { font-size: 13px; } .hud { min-height: 60px; } }
+        @media (min-width: 1200px) and (min-height: 680px) { .stats { font-size: 13px; } }
       `}</style>
     </main>
   );
