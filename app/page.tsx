@@ -13,8 +13,8 @@ type Rect = { x: number; y: number; w: number; h: number };
 type Wall = Rect & { id: number; kind: WallKind; hp: number; maxHp: number };
 type Terrain = Rect & { id: number; kind: TerrainKind };
 type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss" | "helper"; dir: Dir; speed: number; cooldown: number; aiTimer: number; hp: number; fast?: boolean };
-type Drone = Rect & { id: string; team: "friendly" | "enemy"; speed: number; cooldown: number; angle: number; spark: number };
-type Bullet = Rect & { id: string; owner: Owner; sourceId: string; dir: Dir; speed: number; dead?: boolean };
+type Drone = Rect & { id: string; team: "friendly" | "enemy"; speed: number; cooldown: number; angle: number; spark: number; hp?: number };
+type Bullet = Rect & { id: string; owner: Owner; sourceId: string; dir: Dir; speed: number; vx?: number; vy?: number; dead?: boolean };
 type Explosion = { id: string; x: number; y: number; t: number; life: number; size: number };
 type PowerUp = Rect & { id: string; kind: "speed"; life: number };
 type Missile = { active: boolean; x: number; y: number; vx: number; vy: number; speed: number };
@@ -58,37 +58,43 @@ type Game = {
   speedBoostTimer: number;
 };
 
-const CELL = 58;
-const COLS = 17;
-const ROWS = 11;
+const CELL = 52;
+const COLS = 21;
+const ROWS = 13;
 const WORLD_W = COLS * CELL;
 const WORLD_H = ROWS * CELL;
 
-const PLAYER_SIZE = 54;
-const ENEMY_SIZE = 52;
-const HELPER_TANK_SIZE = 50;
-const BOSS_SIZE = ENEMY_SIZE;
-const FRIENDLY_DRONE_SIZE = 34;
-const ENEMY_DRONE_SIZE = 46;
+const PLAYER_SIZE = 44;
+const ENEMY_SIZE = 42;
+const HELPER_TANK_SIZE = 42;
+const BOSS_SIZE = 50;
+const FRIENDLY_DRONE_SIZE = 30;
+const ENEMY_DRONE_SIZE = 42;
 
 const TARGET_KILLS = 20;
-const ACTIVE_ENEMIES = 6;
+const ACTIVE_ENEMIES = 1;
 const ENEMY_MAX_HP = 40;
 const ENEMY_DRONE_MAX_HP = 120;
 const PLAYER_LIVES = 3;
 const PLAYER_HP_PER_LIFE = 10;
-const BOSS_MAX_HP = 80;
+const BOSS_MAX_HP = 160;
 
 const PLAYER_BASE_SPEED = 285;
 const PLAYER_BOOST_SPEED = 380;
 const ENEMY_SPEED = 58;
 const ENEMY_FAST_SPEED = 162;
 const TOTAL_FAST_ENEMIES = 4;
-const ACTIVE_FAST_ENEMIES = 4;
-const BOSS_SPEED = 285;
+const ACTIVE_FAST_ENEMIES = 1;
+const BOSS_SPEED = 132;
 const FRIENDLY_DRONE_SPEED = 610;
 const ENEMY_DRONE_SPEED = 135;
-const HELPER_TANK_SPEED = 118;
+const HELPER_TANK_SPEED = 265;
+const HELPER_MAX_HP = 20;
+const DRONE_MULTI_TARGETS = 4;
+const FRIENDLY_DRONE_TARGET_RANGE = 335;
+const ENEMY_TANK_AGGRO_RANGE = 285;
+const BOSS_DRONE_FIRE_RANGE = 475;
+const FRIENDLY_DRONE_MAX_HP = 80;
 
 const EMPTY_INPUT: InputState = { up: false, down: false, left: false, right: false, fire: false };
 const DIRS: Dir[] = ["up", "right", "down", "left"];
@@ -145,6 +151,10 @@ function dirVector(dir: Dir) {
   if (dir === "down") return { dx: 0, dy: 1 };
   if (dir === "left") return { dx: -1, dy: 0 };
   return { dx: 1, dy: 0 };
+}
+
+function directionFromDelta(dx: number, dy: number): Dir {
+  return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
 }
 
 function rectsOverlap(a: Rect, b: Rect) {
@@ -233,16 +243,16 @@ function buildTerrain(): Terrain[] {
     terrain.push({ id: id++, kind, x: gx * CELL, y: gy * CELL, w: gw * CELL, h: gh * CELL });
   };
 
-  // Larger readable terrain zones for the new big-cell battlefield.
-  rect(2, 1, 3, 1, "grass");
-  rect(12, 1, 3, 1, "grass");
-  rect(2, 8, 3, 2, "grass");
-  rect(12, 8, 3, 2, "grass");
-  rect(7, 4, 3, 3, "grass");
-  rect(5, 3, 1, 2, "water");
-  rect(11, 3, 1, 2, "water");
-  rect(5, 7, 1, 2, "water");
-  rect(11, 7, 1, 2, "water");
+  // Wider battlefield with more grid cells, but smaller tank silhouettes for clearer spacing.
+  rect(2, 1, 4, 1, "grass");
+  rect(15, 1, 4, 1, "grass");
+  rect(2, 10, 4, 2, "grass");
+  rect(15, 10, 4, 2, "grass");
+  rect(8, 5, 5, 3, "grass");
+  rect(5, 4, 1, 2, "water");
+  rect(15, 4, 1, 2, "water");
+  rect(5, 8, 1, 2, "water");
+  rect(15, 8, 1, 2, "water");
   return terrain;
 }
 
@@ -262,32 +272,37 @@ function buildWalls(): Wall[] {
     for (let y = gy; y < gy + gh; y++) for (let x = gx; x < gx + gw; x++) add(x, y, kind);
   };
 
-  // Big readable cover blocks. Fewer cells keep movement clear on mobile.
+  // Big readable cover blocks across a larger grid. Spacing stays open for mobile controls.
   rect(3, 1, 1, 1, "brick");
-  rect(13, 1, 1, 1, "brick");
-  rect(7, 1, 3, 1, "stone");
-  rect(1, 4, 1, 2, "brick");
-  rect(15, 4, 1, 2, "brick");
-  rect(4, 4, 1, 1, "metal");
-  rect(12, 4, 1, 1, "metal");
-  rect(7, 3, 1, 2, "brick");
+  rect(17, 1, 1, 1, "brick");
+  rect(8, 1, 5, 1, "stone");
+  rect(1, 5, 1, 2, "brick");
+  rect(19, 5, 1, 2, "brick");
+  rect(5, 5, 1, 1, "metal");
+  rect(15, 5, 1, 1, "metal");
   rect(9, 3, 1, 2, "brick");
-  rect(7, 7, 1, 2, "brick");
-  rect(9, 7, 1, 2, "brick");
-  rect(4, 6, 1, 1, "stone");
-  rect(12, 6, 1, 1, "stone");
-  rect(1, 7, 1, 2, "brick");
-  rect(15, 7, 1, 2, "brick");
-  rect(7, 9, 3, 1, "metal");
-  rect(3, 9, 1, 1, "brick");
-  rect(13, 9, 1, 1, "brick");
+  rect(11, 3, 1, 2, "brick");
+  rect(9, 8, 1, 2, "brick");
+  rect(11, 8, 1, 2, "brick");
+  rect(5, 7, 1, 1, "stone");
+  rect(15, 7, 1, 1, "stone");
+  rect(1, 9, 1, 2, "brick");
+  rect(19, 9, 1, 2, "brick");
+  rect(8, 11, 5, 1, "metal");
+  rect(3, 11, 1, 1, "brick");
+  rect(17, 11, 1, 1, "brick");
+  rect(6, 2, 1, 1, "brick");
+  rect(14, 2, 1, 1, "brick");
+  rect(6, 10, 1, 1, "brick");
+  rect(14, 10, 1, 1, "brick");
 
   const clearZones: Rect[] = [
     { x: 0, y: 0, w: CELL * 3, h: CELL * 3 },
     { x: WORLD_W - CELL * 3, y: 0, w: CELL * 3, h: CELL * 3 },
     { x: 0, y: WORLD_H - CELL * 3, w: CELL * 3, h: CELL * 3 },
     { x: WORLD_W - CELL * 3, y: WORLD_H - CELL * 3, w: CELL * 3, h: CELL * 3 },
-    { x: CELL * 6, y: CELL * 4, w: CELL * 5, h: CELL * 3 },
+    { x: CELL * 7, y: CELL * 5, w: CELL * 7, h: CELL * 3 },
+    { x: CELL * 8, y: CELL * 1, w: CELL * 5, h: CELL * 2 },
   ];
   return walls.filter((w) => !clearZones.some((z) => rectsOverlap(w, z)));
 }
@@ -308,14 +323,13 @@ function createHelperTank(player: Tank): Tank {
     speed: HELPER_TANK_SPEED,
     cooldown: 0,
     aiTimer: 0,
-    hp: 1,
+    hp: HELPER_MAX_HP,
   };
 }
 
 function createFriendlyDrones(player: Tank): Drone[] {
   return [
-    { id: "drone-a", team: "friendly", x: player.x - 92, y: player.y + 48, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: 0, spark: 0 },
-    { id: "drone-b", team: "friendly", x: player.x + 92, y: player.y + 48, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: Math.PI, spark: 0 },
+    { id: "friend-drone", team: "friendly", x: player.x, y: player.y + 56, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: 0, spark: 0, hp: FRIENDLY_DRONE_MAX_HP },
   ];
 }
 
@@ -323,9 +337,27 @@ function createEnemyDrone(): Drone {
   return { id: "enemy-drone", team: "enemy", x: WORLD_W / 2 - ENEMY_DRONE_SIZE / 2, y: CELL * 1.3, w: ENEMY_DRONE_SIZE, h: ENEMY_DRONE_SIZE, speed: ENEMY_DRONE_SPEED, cooldown: 0, angle: 0, spark: 0 };
 }
 
+function createBossTank(): Tank {
+  return {
+    id: "boss",
+    kind: "boss",
+    x: WORLD_W / 2 - BOSS_SIZE / 2,
+    y: CELL * 1.25 + (CELL - BOSS_SIZE) / 2,
+    w: BOSS_SIZE,
+    h: BOSS_SIZE,
+    dir: "down",
+    speed: BOSS_SPEED,
+    cooldown: 0.22,
+    aiTimer: 0.12,
+    hp: BOSS_MAX_HP,
+    fast: false,
+  };
+}
+
 function createGame(status: Status = "idle", muted = false): Game {
   const player = createPlayer();
   const helper = createHelperTank(player);
+  const boss = createBossTank();
   return {
     status,
     walls: buildWalls(),
@@ -333,7 +365,7 @@ function createGame(status: Status = "idle", muted = false): Game {
     player,
     helper,
     enemies: [],
-    boss: null,
+    boss,
     friendlyDrones: createFriendlyDrones(player),
     enemyDrone: createEnemyDrone(),
     enemyDroneHp: ENEMY_DRONE_MAX_HP,
@@ -350,8 +382,8 @@ function createGame(status: Status = "idle", muted = false): Game {
     kills: 0,
     normalSpawned: 0,
     fastSpawned: 0,
-    bossHp: 0,
-    bossSpawned: false,
+    bossHp: BOSS_MAX_HP,
+    bossSpawned: true,
     playerInvincible: 0,
     seed: 987654321,
     time: 0,
@@ -425,11 +457,13 @@ function isAreaFree(game: Game, r: Rect, allowPlayer = false) {
 }
 
 function spawnNormalEnemies(game: Game) {
+  const middleX = Math.floor(COLS / 2);
+  const middleY = Math.floor(ROWS / 2);
   const points = [
-    { gx: 1, gy: 1, dir: "down" as Dir }, { gx: 15, gy: 1, dir: "down" as Dir },
-    { gx: 1, gy: 9, dir: "up" as Dir }, { gx: 15, gy: 9, dir: "up" as Dir },
-    { gx: 8, gy: 1, dir: "down" as Dir }, { gx: 8, gy: 9, dir: "up" as Dir },
-    { gx: 1, gy: 5, dir: "right" as Dir }, { gx: 15, gy: 5, dir: "left" as Dir },
+    { gx: 1, gy: 1, dir: "down" as Dir }, { gx: COLS - 2, gy: 1, dir: "down" as Dir },
+    { gx: 1, gy: ROWS - 2, dir: "up" as Dir }, { gx: COLS - 2, gy: ROWS - 2, dir: "up" as Dir },
+    { gx: middleX, gy: 1, dir: "down" as Dir }, { gx: middleX, gy: ROWS - 2, dir: "up" as Dir },
+    { gx: 1, gy: middleY, dir: "right" as Dir }, { gx: COLS - 2, gy: middleY, dir: "left" as Dir },
   ];
   let guard = 0;
   while (game.enemies.length < ACTIVE_ENEMIES && game.normalSpawned < TARGET_KILLS && guard < 200) {
@@ -446,13 +480,14 @@ function spawnNormalEnemies(game: Game) {
 }
 
 function spawnBoss(game: Game, audio?: ArcadeAudio | null) {
-  if (game.bossSpawned) return;
+  if (game.boss) return;
+  game.boss = createBossTank();
   game.bossSpawned = true;
   game.bossHp = BOSS_MAX_HP;
-  game.message = "MASTER TANK ARRIVED";
-  game.messageTimer = 2;
-  game.shake = 0.5;
-  game.boss = { id: "boss", kind: "boss", x: WORLD_W / 2 - BOSS_SIZE / 2, y: CELL * 1.25, w: BOSS_SIZE, h: BOSS_SIZE, dir: "down", speed: BOSS_SPEED, cooldown: 0.12, aiTimer: 0.08, hp: BOSS_MAX_HP, fast: true };
+  game.bossDelay = 0;
+  game.message = "RED BOSS TANK ACTIVE";
+  game.messageTimer = 1.6;
+  game.shake = Math.max(game.shake, 0.3);
   audio?.play("boss");
 }
 
@@ -478,20 +513,74 @@ function fireBullet(game: Game, tank: Tank, owner: Owner, audio?: ArcadeAudio | 
   audio?.play("shoot");
 }
 
-function fireDroneBullet(game: Game, drone: Drone, target: Rect, audio?: ArcadeAudio | null) {
-  if (drone.cooldown > 0) return;
-  const c = centerOf(drone);
+function pushAimedBullet(game: Game, owner: Owner, sourceId: string, origin: Rect, target: Rect, speed: number, size: number) {
+  const c = centerOf(origin);
   const t = centerOf(target);
   const dx = t.x - c.x;
   const dy = t.y - c.y;
-  const horizontal = Math.abs(dx) > Math.abs(dy);
-  const dir: Dir = horizontal ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
-  const vertical = dir === "up" || dir === "down";
-  const bw = vertical ? 7 : 16;
-  const bh = vertical ? 16 : 7;
-  game.bullets.push({ id: `db-${performance.now()}-${Math.random()}`, owner: "drone", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 650 });
-  drone.cooldown = 0.16;
+  const d = Math.max(1, Math.hypot(dx, dy));
+  game.bullets.push({
+    id: `${sourceId}-shot-${performance.now()}-${Math.random()}`,
+    owner,
+    sourceId,
+    x: c.x - size / 2,
+    y: c.y - size / 2,
+    w: size,
+    h: size,
+    dir: directionFromDelta(dx, dy),
+    vx: dx / d,
+    vy: dy / d,
+    speed,
+  });
+}
+
+function fireDroneBullet(game: Game, drone: Drone, target: Rect, audio?: ArcadeAudio | null) {
+  if (drone.cooldown > 0) return;
+  pushAimedBullet(game, "drone", drone.id, drone, target, 680, 9);
+  drone.cooldown = 0.13;
   audio?.play("spark");
+}
+
+function fireDroneVolley(game: Game, drone: Drone, targets: Rect[], audio?: ArcadeAudio | null) {
+  if (drone.cooldown > 0 || targets.length === 0) return;
+  for (const target of targets.slice(0, DRONE_MULTI_TARGETS)) {
+    pushAimedBullet(game, "drone", drone.id, drone, target, 690, 9);
+  }
+  drone.cooldown = 0.22;
+  audio?.play("spark");
+}
+
+function fireHelperBullet(game: Game, helper: Tank, target: Tank, audio?: ArcadeAudio | null) {
+  if (helper.cooldown > 0) return;
+  pushAimedBullet(game, "player", helper.id, helper, target, 560, 10);
+  helper.cooldown = 0.24;
+  audio?.play("shoot");
+}
+
+function fireBossAimedBullet(game: Game, boss: Tank, target: Rect, audio?: ArcadeAudio | null) {
+  if (boss.cooldown > 0) return;
+  const b = centerOf(boss);
+  const t = centerOf(target);
+  boss.dir = directionFromDelta(t.x - b.x, t.y - b.y);
+  pushAimedBullet(game, "enemy", boss.id, boss, target, 355, 12);
+  boss.cooldown = 0.44;
+  audio?.play("shoot");
+}
+
+function damageFriendlyDrone(game: Game, drone: Drone, amount: number, x: number, y: number, audio?: ArcadeAudio | null) {
+  drone.hp = Math.max(0, (drone.hp ?? FRIENDLY_DRONE_MAX_HP) - amount);
+  drone.spark = 0.26;
+  addExplosion(game, x, y, 18);
+  audio?.play("spark");
+  if (drone.hp <= 0) {
+    const c = centerOf(drone);
+    addExplosion(game, c.x, c.y, 58, 0.42);
+    game.friendlyDrones = game.friendlyDrones.filter((item) => item.id !== drone.id);
+    game.message = "FRIEND DRONE DOWN";
+    game.messageTimer = 1.4;
+    game.shake = Math.max(game.shake, 0.18);
+    audio?.play("boom");
+  }
 }
 
 
@@ -561,6 +650,29 @@ function damageEnemyTank(game: Game, enemy: Tank, amount: number, audio?: Arcade
   addExplosion(game, enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, 14);
   audio?.play("hit");
   if (enemy.hp <= 0) destroyEnemy(game, enemy.id, audio);
+}
+
+function destroyBossTank(game: Game, audio?: ArcadeAudio | null) {
+  if (!game.boss) return;
+  const target = centerOf(game.boss);
+  addExplosion(game, target.x, target.y, 96, 0.55);
+  game.boss = null;
+  game.bossHp = 0;
+  game.bossDelay = 1.4;
+  game.message = "BOSS TANK REFORMING";
+  game.messageTimer = 1.4;
+  game.shake = Math.max(game.shake, 0.48);
+  audio?.play("boom");
+}
+
+function damageBossTank(game: Game, amount: number, x: number, y: number, audio?: ArcadeAudio | null) {
+  if (!game.boss) return;
+  game.boss.hp = Math.max(0, game.boss.hp - amount);
+  game.bossHp = game.boss.hp;
+  game.shake = Math.max(game.shake, 0.045);
+  addExplosion(game, x, y, 16);
+  audio?.play("hit");
+  if (game.boss.hp <= 0) destroyBossTank(game, audio);
 }
 
 function destroyEnemyDrone(game: Game, audio?: ArcadeAudio | null) {
@@ -669,7 +781,7 @@ function getThreatBullets(game: Game) {
 function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
   for (const bullet of game.bullets) {
     if (bullet.dead) continue;
-    const v = dirVector(bullet.dir);
+    const v = bullet.vx !== undefined && bullet.vy !== undefined ? { dx: bullet.vx, dy: bullet.vy } : dirVector(bullet.dir);
     const steps = Math.max(1, Math.ceil((bullet.speed * dt) / 8));
     const stepDt = dt / steps;
     for (let i = 0; i < steps; i++) {
@@ -683,6 +795,12 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
       }
 
       if (bullet.owner === "enemy") {
+        const friendlyDroneHit = game.friendlyDrones.find((drone) => rectsOverlap(bullet, drone));
+        if (friendlyDroneHit) {
+          bullet.dead = true;
+          damageFriendlyDrone(game, friendlyDroneHit, bullet.sourceId === "boss" ? 2 : 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
+          break;
+        }
         if (bullet.sourceId !== "enemy-drone" && rectsOverlap(bullet, tankCollider(game.helper))) {
           bullet.dead = true;
           game.helper.cooldown = 0.18;
@@ -705,6 +823,11 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
           damageEnemyTank(game, enemy, 1, audio);
           break;
         }
+        if (game.boss && rectsOverlap(bullet, tankCollider(game.boss))) {
+          bullet.dead = true;
+          damageBossTank(game, 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
+          break;
+        }
       }
 
       if (bullet.owner === "player") {
@@ -715,6 +838,11 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
         }
         const enemy = game.enemies.find((e) => rectsOverlap(bullet, tankCollider(e)));
         if (enemy) { bullet.dead = true; damageEnemyTank(game, enemy, 1, audio); break; }
+        if (game.boss && rectsOverlap(bullet, tankCollider(game.boss))) {
+          bullet.dead = true;
+          damageBossTank(game, 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
+          break;
+        }
       }
     }
   }
@@ -742,17 +870,28 @@ function updateEnemies(game: Game, dt: number, audio?: ArcadeAudio | null) {
   for (const enemy of game.enemies) {
     enemy.cooldown = Math.max(0, enemy.cooldown - dt);
     enemy.aiTimer -= dt;
-    if (lineClearToPlayer(game, enemy) && aimAtPlayer(game, enemy)) fireBullet(game, enemy, "enemy", audio);
+    const playerDistance = distance(enemy, game.player);
+    const aggro = playerDistance <= ENEMY_TANK_AGGRO_RANGE && !playerIsHiddenFrom(game, enemy);
+
+    if (aggro && lineClearToPlayer(game, enemy) && aimAtPlayer(game, enemy)) fireBullet(game, enemy, "enemy", audio);
+
     if (enemy.aiTimer <= 0) {
-      enemy.aiTimer = 0.45 + rand(game) * 0.95;
+      enemy.aiTimer = aggro ? 0.35 + rand(game) * 0.55 : 0.9 + rand(game) * 1.25;
       const c = centerOf(enemy);
       const p = centerOf(game.player);
-      const preferHorizontal = Math.abs(p.x - c.x) > Math.abs(p.y - c.y);
-      if (rand(game) < 0.5 && !playerIsHiddenFrom(game, enemy)) enemy.dir = preferHorizontal ? (p.x < c.x ? "left" : "right") : p.y < c.y ? "up" : "down";
-      else enemy.dir = DIRS[Math.floor(rand(game) * DIRS.length)];
+      if (aggro) {
+        const preferHorizontal = Math.abs(p.x - c.x) > Math.abs(p.y - c.y);
+        enemy.dir = preferHorizontal ? (p.x < c.x ? "left" : "right") : p.y < c.y ? "up" : "down";
+      } else {
+        enemy.dir = DIRS[Math.floor(rand(game) * DIRS.length)];
+      }
     }
-    const moved = moveTank(game, enemy, dt);
-    if (!moved) { enemy.dir = DIRS[Math.floor(rand(game) * DIRS.length)]; enemy.aiTimer = 0.12; }
+
+    const shouldMove = aggro || rand(game) < 0.45;
+    if (shouldMove) {
+      const moved = moveTank(game, enemy, aggro ? dt : dt * 0.45);
+      if (!moved) { enemy.dir = DIRS[Math.floor(rand(game) * DIRS.length)]; enemy.aiTimer = 0.12; }
+    }
   }
 }
 
@@ -763,11 +902,22 @@ function updateBoss(game: Game, dt: number, audio?: ArcadeAudio | null) {
   boss.aiTimer -= dt;
   const c = centerOf(boss);
   const p = centerOf(game.player);
-  if (lineClearToPlayer(game, boss) && aimAtPlayer(game, boss)) fireBullet(game, boss, "enemy", audio);
+  const droneTarget = game.friendlyDrones
+    .filter((drone) => distance(boss, drone) <= BOSS_DRONE_FIRE_RANGE)
+    .sort((a, b) => distance(boss, a) - distance(boss, b))[0];
+
+  if (droneTarget) {
+    fireBossAimedBullet(game, boss, droneTarget, audio);
+  } else if (lineClearToPlayer(game, boss) && aimAtPlayer(game, boss)) {
+    fireBullet(game, boss, "enemy", audio);
+  }
+
   if (boss.aiTimer <= 0) {
     boss.aiTimer = 0.18;
-    const dx = p.x - c.x;
-    const dy = p.y - c.y;
+    const chaseTarget = droneTarget ?? game.player;
+    const t = centerOf(chaseTarget);
+    const dx = t.x - c.x;
+    const dy = t.y - c.y;
     boss.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
   }
   const moved = moveTank(game, boss, dt);
@@ -783,7 +933,7 @@ function updatePlayer(game: Game, input: InputState, dt: number, audio?: ArcadeA
   else if (input.left) dir = "left";
   else if (input.right) dir = "right";
   if (dir) { game.player.dir = dir; moveTank(game, game.player, dt); }
-  if (input.fire) fireBullet(game, game.player, "player", audio);
+  fireBullet(game, game.player, "player", audio);
   for (const power of game.powerUps) {
     if (rectsOverlap(tankCollider(game.player), power)) {
       game.speedBoostTimer = Math.max(game.speedBoostTimer, 8);
@@ -796,17 +946,39 @@ function updatePlayer(game: Game, input: InputState, dt: number, audio?: ArcadeA
   }
 }
 
-function nearestDroneAttackTarget(game: Game, drone: Drone, reservedTargets: Set<string>): Tank | null {
+function getDroneAttackTargets(game: Game, drone: Drone, limit = DRONE_MULTI_TARGETS): Tank[] {
+  const result: Tank[] = [];
   const priorityGroups = [
-    game.enemies.filter((enemy) => enemy.fast && !reservedTargets.has(enemy.id)),
-    game.enemies.filter((enemy) => !enemy.fast && !reservedTargets.has(enemy.id)),
+    game.enemies.filter((enemy) => enemy.fast),
+    game.enemies.filter((enemy) => !enemy.fast),
+    game.boss ? [game.boss] : [],
+  ];
+
+  for (const group of priorityGroups) {
+    const sorted = [...group]
+      .filter((enemy) => distance(drone, enemy) <= FRIENDLY_DRONE_TARGET_RANGE)
+      .sort((a, b) => distance(drone, a) - distance(drone, b));
+    for (const enemy of sorted) {
+      if (result.length >= limit) return result;
+      if (!result.some((item) => item.id === enemy.id)) result.push(enemy);
+    }
+  }
+
+  return result;
+}
+
+function getHelperTankTarget(game: Game): Tank | null {
+  const priorityGroups = [
+    game.enemies.filter((enemy) => enemy.fast),
+    game.enemies.filter((enemy) => !enemy.fast),
+    game.boss ? [game.boss] : [],
   ];
 
   for (const group of priorityGroups) {
     let best: Tank | null = null;
     let bestDistance = Infinity;
     for (const enemy of group) {
-      const d = distance(drone, enemy);
+      const d = distance(game.helper, enemy);
       if (d < bestDistance) {
         best = enemy;
         bestDistance = d;
@@ -818,37 +990,54 @@ function nearestDroneAttackTarget(game: Game, drone: Drone, reservedTargets: Set
   return null;
 }
 
+
 function updateHelperTank(game: Game, dt: number, audio?: ArcadeAudio | null) {
   const helper = game.helper;
+  helper.speed = HELPER_TANK_SPEED;
   helper.cooldown = Math.max(0, helper.cooldown - dt);
-  const threats = getThreatBullets(game);
-  const pc = centerOf(game.player);
-  const targetBullet = threats[0];
 
-  if (targetBullet) {
-    const t = centerOf(targetBullet);
+  const threats = getThreatBullets(game);
+  const urgentBullet = threats.find((bullet) => distance(helper, bullet) < 150 || distance(game.player, bullet) < 140);
+  if (urgentBullet) {
+    const t = centerOf(urgentBullet);
     const h = centerOf(helper);
-    helper.dir = Math.abs(t.x - h.x) > Math.abs(t.y - h.y) ? (t.x < h.x ? "left" : "right") : t.y < h.y ? "up" : "down";
+    helper.dir = directionFromDelta(t.x - h.x, t.y - h.y);
     moveTank(game, helper, dt);
-    if (distance(helper, targetBullet) < 48) {
-      targetBullet.dead = true;
-      helper.cooldown = 0.22;
+    if (distance(helper, urgentBullet) < 52) {
+      urgentBullet.dead = true;
+      helper.cooldown = Math.max(helper.cooldown, 0.12);
       addExplosion(game, t.x, t.y, 20);
       audio?.play("spark");
     }
     return;
   }
 
+  const target = getHelperTankTarget(game);
+  if (target) {
+    const h = centerOf(helper);
+    const t = centerOf(target);
+    helper.dir = directionFromDelta(t.x - h.x, t.y - h.y);
+    const keepDistance = target.fast ? 115 : 140;
+    if (distance(helper, target) > keepDistance) {
+      const moved = moveTank(game, helper, dt);
+      if (!moved) helper.dir = DIRS[Math.floor(rand(game) * DIRS.length)];
+    }
+    if (distance(helper, target) < 430) fireHelperBullet(game, helper, target, audio);
+    return;
+  }
+
+  const pc = centerOf(game.player);
   const guardX = pc.x - 95;
   const guardY = pc.y + 76;
   const hc = centerOf(helper);
   const dx = guardX - hc.x;
   const dy = guardY - hc.y;
   if (Math.hypot(dx, dy) > 26) {
-    helper.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
-    moveTank(game, helper, dt * 0.7);
+    helper.dir = directionFromDelta(dx, dy);
+    moveTank(game, helper, dt);
   }
 }
+
 
 function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
   for (const d of game.friendlyDrones) {
@@ -876,27 +1065,27 @@ function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
     }
   }
 
-  const reservedTargets = new Set<string>();
-
   for (let i = 0; i < game.friendlyDrones.length; i++) {
     const drone = game.friendlyDrones[i];
-    const attackTarget = nearestDroneAttackTarget(game, drone, reservedTargets);
+    const allTargets = getDroneAttackTargets(game, drone, ACTIVE_ENEMIES);
+    const assignedTargets = allTargets.slice(i * DRONE_MULTI_TARGETS, i * DRONE_MULTI_TARGETS + DRONE_MULTI_TARGETS);
+    const attackTargets = assignedTargets.length > 0 ? assignedTargets : allTargets.slice(0, DRONE_MULTI_TARGETS);
+    const primaryTarget = attackTargets[0];
 
-    if (attackTarget) {
-      reservedTargets.add(attackTarget.id);
-      const tc = centerOf(attackTarget);
-      const sideOffset = i === 0 ? -56 : 56;
-      const chaseSlow = attackTarget.fast ? 0.95 : 0.82;
+    if (primaryTarget) {
+      const tc = centerOf(primaryTarget);
+      const sideOffset = game.friendlyDrones.length > 1 ? (i === 0 ? -56 : 56) : 0;
+      const chaseSlow = primaryTarget.fast ? 0.98 : 0.86;
       moveDroneToward(drone, tc.x + sideOffset, tc.y - 48, dt, chaseSlow);
-      if (distance(drone, attackTarget) < 500) fireDroneBullet(game, drone, attackTarget, audio);
+      if (attackTargets.some((target) => distance(drone, target) <= FRIENDLY_DRONE_TARGET_RANGE)) fireDroneVolley(game, drone, attackTargets, audio);
       continue;
     }
 
     if (game.enemyDrone && game.enemyDroneAggroTimer > 0) {
       const ec = centerOf(game.enemyDrone);
-      const ring = i === 0 ? -58 : 58;
+      const ring = game.friendlyDrones.length > 1 ? (i === 0 ? -58 : 58) : 0;
       moveDroneToward(drone, ec.x + ring, ec.y - 32, dt, 0.92);
-      if (distance(drone, game.enemyDrone) < 470) fireDroneBullet(game, drone, game.enemyDrone, audio);
+      if (distance(drone, game.enemyDrone) < FRIENDLY_DRONE_TARGET_RANGE) fireDroneBullet(game, drone, game.enemyDrone, audio);
       if (distance(drone, game.enemyDrone) < 46) {
         drone.spark = 0.22;
         game.enemyDrone.spark = 0.22;
@@ -905,7 +1094,7 @@ function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
       continue;
     }
 
-    const guardX = pc.x + (i === 0 ? -104 : 104);
+    const guardX = pc.x + (game.friendlyDrones.length > 1 ? (i === 0 ? -104 : 104) : 0);
     const guardY = pc.y + 60;
     moveDroneToward(drone, guardX, guardY, dt, 0.7);
   }
@@ -962,6 +1151,10 @@ function updateGame(game: Game, input: InputState, dt: number, audio?: ArcadeAud
   updateHelperTank(game, dt, audio);
   updateBullets(game, dt, audio);
   updateMissile(game, dt, audio);
+  if (!game.boss) {
+    game.bossDelay = Math.max(0, game.bossDelay - dt);
+    if (game.bossDelay <= 0) spawnBoss(game, audio);
+  }
 
   for (const p of game.powerUps) p.life -= dt;
   game.powerUps = game.powerUps.filter((p) => p.life > 0);
@@ -1084,6 +1277,38 @@ function fillRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w:
   ctx.fill();
 }
 
+function drawTankLifeBar(ctx: CanvasRenderingContext2D, game: Game, tank: Tank) {
+  let value = tank.hp;
+  let max = ENEMY_MAX_HP;
+  let fill = tank.fast ? "#fb923c" : "#22c55e";
+
+  if (tank.kind === "player") {
+    value = game.playerHp;
+    max = PLAYER_HP_PER_LIFE;
+    fill = "#facc15";
+  } else if (tank.kind === "helper") {
+    max = HELPER_MAX_HP;
+    fill = "#38bdf8";
+  } else if (tank.kind === "boss") {
+    max = BOSS_MAX_HP;
+    fill = "#fb7185";
+  }
+
+  const ratio = clamp(value / Math.max(1, max), 0, 1);
+  const barW = Math.max(34, tank.w * 0.86);
+  const barH = 6;
+  const x = tank.x + tank.w / 2 - barW / 2;
+  const y = Math.max(2, tank.y - 11);
+
+  fillRoundedRect(ctx, x - 1, y - 1, barW + 2, barH + 2, 4, "rgba(2,6,23,0.86)");
+  fillRoundedRect(ctx, x, y, barW, barH, 3, "rgba(15,23,42,0.9)");
+  fillRoundedRect(ctx, x, y, barW * ratio, barH, 3, fill);
+  ctx.strokeStyle = "rgba(255,255,255,0.72)";
+  ctx.lineWidth = 1;
+  roundedRectPath(ctx, x, y, barW, barH, 3);
+  ctx.stroke();
+}
+
 function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invincible = false) {
   if (invincible && Math.floor(performance.now() / 90) % 2 === 0) return;
   const inGrass = isInGrass(game, tankCollider(tank));
@@ -1201,6 +1426,7 @@ function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invinci
 
   ctx.restore();
   ctx.globalAlpha = 1;
+  drawTankLifeBar(ctx, game, tank);
 }
 
 function drawDrone(ctx: CanvasRenderingContext2D, drone: Drone) {
@@ -1334,7 +1560,7 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
   if (game.boss) drawTank(ctx, game, game.boss);
 
   for (const b of game.bullets) {
-    ctx.fillStyle = b.owner === "player" ? "#ffd35a" : b.owner === "drone" ? "#bfdbfe" : "#67e8f9";
+    ctx.fillStyle = b.sourceId === "helper" ? "#7dd3fc" : b.owner === "player" ? "#ffd35a" : b.owner === "drone" ? "#bfdbfe" : "#67e8f9";
     ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.fillStyle = "#fff";
     ctx.fillRect(b.x + 1, b.y + 1, Math.max(2, b.w - 2), Math.max(2, b.h - 2));
@@ -1381,12 +1607,13 @@ function snapshot(game: Game) {
     hp: game.playerHp,
     kills: game.kills,
     active: game.enemies.length,
-    bossHp: game.bossHp,
+    bossHp: game.boss ? game.boss.hp : 0,
     bossSpawned: game.bossSpawned,
+    bossActive: Boolean(game.boss),
     muted: game.muted,
     boost: game.speedBoostTimer,
     drones: game.friendlyDrones.length,
-    helper: "Online",
+    helper: "Fast Support",
     fastActive: game.enemies.filter((enemy) => enemy.fast).length,
     enemyDroneMode: game.enemyDroneAggroTimer > 0 ? "Attacking" : "Patrolling",
     enemyDrone: game.enemyDrone ? "Active" : game.enemyDroneDestroyed ? "Destroyed" : "Offline",
@@ -1518,7 +1745,6 @@ export default function TankarGamePage() {
       if (code === "ArrowDown" || code === "KeyS") next.down = value;
       if (code === "ArrowLeft" || code === "KeyA") next.left = value;
       if (code === "ArrowRight" || code === "KeyD") next.right = value;
-      if (code === "Space" || code === "Enter" || code === "NumpadEnter") next.fire = value;
       keyboardRef.current = next;
     };
 
@@ -1527,7 +1753,7 @@ export default function TankarGamePage() {
     window.addEventListener("orientationchange", resize);
 
     const down = (e: KeyboardEvent) => {
-      const useful = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD", "Space", "Enter", "NumpadEnter", "KeyP", "KeyM", "KeyF", "Escape", "Backspace", "MediaPlayPause", "BrowserBack", "GoBack"];
+      const useful = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD", "Enter", "NumpadEnter", "KeyP", "KeyM", "KeyF", "Escape", "Backspace", "MediaPlayPause", "BrowserBack", "GoBack"];
       if (useful.includes(e.code)) e.preventDefault();
       ensureAudio();
       setKeyInput(e.code, true);
@@ -1564,7 +1790,6 @@ export default function TankarGamePage() {
       next.right = axisX > 0.35 || Boolean(buttons[15]?.pressed);
       next.up = axisY < -0.35 || Boolean(buttons[12]?.pressed);
       next.down = axisY > 0.35 || Boolean(buttons[13]?.pressed);
-      next.fire = Boolean(buttons[0]?.pressed || buttons[7]?.pressed);
       gamepadRef.current = next;
       const pausePressed = Boolean(buttons[9]?.pressed || buttons[8]?.pressed);
       const backPressed = Boolean(buttons[1]?.pressed);
@@ -1608,8 +1833,9 @@ export default function TankarGamePage() {
           <span>HP: {hud.hp}/10</span>
           <span>Kills: {hud.kills}/20</span>
           <span>Enemy Tanks: {hud.active}/6</span>
-          <span className="assistantOk">Drones: {hud.drones}</span>
+          <span className="assistantOk">Friend Drone: {hud.drones}</span>
           <span className="boost">Fast Tanks: {hud.fastActive}/4</span>
+          <span className="boss">Boss: {hud.bossActive ? `${hud.bossHp}/160` : "Respawn"}</span>
           <span className="helperOk">Helper Tank: {hud.helper}</span>
           <span className={hud.enemyDrone === "Active" ? "enemyDrone" : "assistantDown"}>Enemy Drone: {hud.enemyDrone}{hud.enemyDrone === "Active" ? ` · ${hud.enemyDroneMode}` : ""}</span>
           {hud.boost > 0 && <span className="boost">Boost: {hud.boost.toFixed(1)}s</span>}
@@ -1628,14 +1854,14 @@ export default function TankarGamePage() {
           <button className="pad right" aria-label="Move right" {...makePadHandlers("right")}>▶</button>
           <button className="pad down" aria-label="Move down" {...makePadHandlers("down")}>▼</button>
         </div>
-        <div className="fireCluster">
-          <button className="fire" aria-label="Fire" {...makePadHandlers("fire")}>FIRE</button>
+        <div className="fireCluster compactActions">
+          <div className="autoFireBadge" aria-label="Auto fire enabled">AUTO FIRE</div>
           <button className="mini" onClick={togglePause}>Pause</button>
           <button className="mini" onClick={toggleMute}>{hud.muted ? "Sound" : "Mute"}</button>
         </div>
       </section>
 
-      <section className="help">Desktop: WASD/Arrows + Space · Mobile: D-pad + Fire · Drones split targets: fast tanks first, tanks next, red drone only after it attacks · Helper blocks enemy tank bullets · Fullscreen: F</section>
+      <section className="help">Move only: WASD/Arrows or mobile D-pad · player auto-fires · only 1 enemy tank active · enemy tank targets you only when close · boss can fire on drones · Fullscreen: F</section>
       <section className="rotateHint">Rotate for best gameplay</section>
 
       {!loaderReady && (
@@ -1643,7 +1869,7 @@ export default function TankarGamePage() {
           <div className="panel loaderPanel">
             <p className="eyebrow">Loading Game</p>
             <h1>TANKAR</h1>
-            <p>Loading the larger battlefield, circular drones, helper tank, readable walls, controls, and safety information.</p>
+            <p>Loading the larger grid battlefield, 1 circular friend drone, 1 red enemy drone, 1 active enemy tank, always-active red boss tank, helper tank, readable walls, controls, and safety information.</p>
             <div className="loaderBar"><span /></div>
             <nav className="policyLinks" aria-label="Game policy links">
               <a href="terms/">Terms</a>
@@ -1667,7 +1893,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Desktop · Mobile · Android TV</p>
                 <h1>TANKAR BATTLE</h1>
-                <p>Destroy 20 white enemy tanks, protect the golden tank, and let 2 circular drones split targets. They hunt fast tanks first, normal tanks next, and only attack the red drone after it fires.</p>
+                <p>Destroy 20 white enemy tanks one at a time, protect the golden tank, and survive the always-active red boss tank. Enemy tanks only target you when you move close, while the boss can also shoot at your friend drone.</p>
                 {!captchaVerified ? (
                   <div className="captchaBox" role="group" aria-label="Math access check">
                     <strong>Math Access Check</strong>
@@ -1722,7 +1948,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Mission complete</p>
                 <h1>VICTORY</h1>
-                <p>You destroyed 20 enemy tanks and cleared the red enemy drone.</p>
+                <p>You destroyed 20 enemy tanks, cleared the red enemy drone, and survived the boss tank pressure.</p>
                 <button className="primary" onClick={startGame} autoFocus>Play Again</button>
               </>
             )}
@@ -1774,7 +2000,8 @@ export default function TankarGamePage() {
         .pad.right { right: 0; top: 56px; }
         .pad.down { left: 56px; bottom: 0; }
         .fireCluster { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; pointer-events: auto; align-items: end; }
-        .fire { grid-column: span 2; width: 132px; height: 76px; border-radius: 999px; background: rgba(248,113,113,0.92); color: #fff; text-shadow: 1px 1px 0 rgba(0,0,0,0.35); }
+        .compactActions { max-width: 148px; }
+        .autoFireBadge { grid-column: span 2; min-height: 58px; border-radius: 999px; display: grid; place-items: center; padding: 0 16px; font-weight: 1000; letter-spacing: 0.12em; color: #fde68a; border: 1px solid rgba(250,204,21,0.42); background: linear-gradient(135deg, rgba(120,53,15,0.88), rgba(30,41,59,0.92)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 16px 30px rgba(0,0,0,0.28); text-shadow: 1px 1px 0 rgba(0,0,0,0.38); }
         .mini { min-width: 62px; min-height: 48px; border-radius: 14px; font-size: 11px; }
         .rotateHint { display: none; position: absolute; z-index: 7; right: 14px; top: 104px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.58); color: rgba(255,255,255,0.76); font-size: 11px; }
         .overlay { position: absolute; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.72)), repeating-linear-gradient(0deg, rgba(255,255,255,0.035), rgba(255,255,255,0.035) 1px, transparent 1px, transparent 5px); }
@@ -1831,7 +2058,7 @@ export default function TankarGamePage() {
           .pad.left { top: 51px; }
           .pad.right { top: 51px; }
           .pad.down { left: 51px; }
-          .fire { width: 112px; height: 72px; }
+          .autoFireBadge { min-height: 54px; font-size: 12px; }
           .mini { min-width: 52px; min-height: 44px; }
           .help { display: none; }
         }
