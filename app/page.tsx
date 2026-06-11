@@ -72,7 +72,7 @@ const FRIENDLY_DRONE_SIZE = 30;
 const ENEMY_DRONE_SIZE = 42;
 
 const TARGET_KILLS = 20;
-const ACTIVE_ENEMIES = 1;
+const ACTIVE_ENEMIES = 4;
 const ENEMY_MAX_HP = 40;
 const ENEMY_DRONE_MAX_HP = 120;
 const PLAYER_LIVES = 3;
@@ -84,12 +84,15 @@ const PLAYER_BOOST_SPEED = 380;
 const ENEMY_SPEED = 58;
 const ENEMY_FAST_SPEED = 162;
 const TOTAL_FAST_ENEMIES = 4;
-const ACTIVE_FAST_ENEMIES = 1;
+const ACTIVE_FAST_ENEMIES = 2;
 const BOSS_SPEED = 132;
 const FRIENDLY_DRONE_SPEED = 610;
 const ENEMY_DRONE_SPEED = 135;
-const HELPER_TANK_SPEED = 265;
+const HELPER_TANK_SPEED = 325;
 const HELPER_MAX_HP = 20;
+const HELPER_GUARD_RADIUS = 190;
+const HELPER_FIRE_RANGE = 390;
+const HELPER_SUPPORT_RADIUS = 470;
 const DRONE_MULTI_TARGETS = 4;
 const FRIENDLY_DRONE_TARGET_RANGE = 335;
 const ENEMY_TANK_AGGRO_RANGE = 285;
@@ -968,26 +971,24 @@ function getDroneAttackTargets(game: Game, drone: Drone, limit = DRONE_MULTI_TAR
 }
 
 function getHelperTankTarget(game: Game): Tank | null {
-  const priorityGroups = [
-    game.enemies.filter((enemy) => enemy.fast),
-    game.enemies.filter((enemy) => !enemy.fast),
-    game.boss ? [game.boss] : [],
-  ];
+  const playerCenter = centerOf(game.player);
+  const candidates = [
+    ...game.enemies,
+    ...(game.boss ? [game.boss] : []),
+  ].filter((target) => {
+    const targetCenter = centerOf(target);
+    return Math.hypot(targetCenter.x - playerCenter.x, targetCenter.y - playerCenter.y) <= HELPER_SUPPORT_RADIUS
+      || distance(game.helper, target) <= HELPER_FIRE_RANGE;
+  });
 
-  for (const group of priorityGroups) {
-    let best: Tank | null = null;
-    let bestDistance = Infinity;
-    for (const enemy of group) {
-      const d = distance(game.helper, enemy);
-      if (d < bestDistance) {
-        best = enemy;
-        bestDistance = d;
-      }
-    }
-    if (best) return best;
-  }
+  if (candidates.length === 0) return null;
 
-  return null;
+  return candidates.sort((a, b) => {
+    const priorityA = a.fast ? 0 : a.kind === "boss" ? 1 : 2;
+    const priorityB = b.fast ? 0 : b.kind === "boss" ? 1 : 2;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    return distance(game.helper, a) - distance(game.helper, b);
+  })[0];
 }
 
 
@@ -996,14 +997,19 @@ function updateHelperTank(game: Game, dt: number, audio?: ArcadeAudio | null) {
   helper.speed = HELPER_TANK_SPEED;
   helper.cooldown = Math.max(0, helper.cooldown - dt);
 
+  const pc = centerOf(game.player);
+  const guardX = clamp(pc.x - 88, 8, WORLD_W - helper.w - 8);
+  const guardY = clamp(pc.y + 72, 8, WORLD_H - helper.h - 8);
+  const hc = centerOf(helper);
+  const guardDistance = Math.hypot(guardX - hc.x, guardY - hc.y);
+
   const threats = getThreatBullets(game);
-  const urgentBullet = threats.find((bullet) => distance(helper, bullet) < 150 || distance(game.player, bullet) < 140);
-  if (urgentBullet) {
+  const urgentBullet = threats.find((bullet) => distance(helper, bullet) < 170 || distance(game.player, bullet) < 150);
+  if (urgentBullet && guardDistance < HELPER_GUARD_RADIUS) {
     const t = centerOf(urgentBullet);
-    const h = centerOf(helper);
-    helper.dir = directionFromDelta(t.x - h.x, t.y - h.y);
+    helper.dir = directionFromDelta(t.x - hc.x, t.y - hc.y);
     moveTank(game, helper, dt);
-    if (distance(helper, urgentBullet) < 52) {
+    if (distance(helper, urgentBullet) < 54) {
       urgentBullet.dead = true;
       helper.cooldown = Math.max(helper.cooldown, 0.12);
       addExplosion(game, t.x, t.y, 20);
@@ -1013,28 +1019,26 @@ function updateHelperTank(game: Game, dt: number, audio?: ArcadeAudio | null) {
   }
 
   const target = getHelperTankTarget(game);
-  if (target) {
-    const h = centerOf(helper);
+  if (target && guardDistance <= HELPER_GUARD_RADIUS) {
     const t = centerOf(target);
-    helper.dir = directionFromDelta(t.x - h.x, t.y - h.y);
-    const keepDistance = target.fast ? 115 : 140;
-    if (distance(helper, target) > keepDistance) {
-      const moved = moveTank(game, helper, dt);
-      if (!moved) helper.dir = DIRS[Math.floor(rand(game) * DIRS.length)];
+    helper.dir = directionFromDelta(t.x - hc.x, t.y - hc.y);
+    const targetDistance = distance(helper, target);
+    const keepDistance = target.fast ? 105 : target.kind === "boss" ? 165 : 130;
+    if (targetDistance > keepDistance && distance(game.player, target) < HELPER_SUPPORT_RADIUS) {
+      const moved = moveTank(game, helper, dt * 0.82);
+      if (!moved) helper.dir = directionFromDelta(guardX - hc.x, guardY - hc.y);
     }
-    if (distance(helper, target) < 430) fireHelperBullet(game, helper, target, audio);
+    if (targetDistance < HELPER_FIRE_RANGE) fireHelperBullet(game, helper, target, audio);
     return;
   }
 
-  const pc = centerOf(game.player);
-  const guardX = pc.x - 95;
-  const guardY = pc.y + 76;
-  const hc = centerOf(helper);
-  const dx = guardX - hc.x;
-  const dy = guardY - hc.y;
-  if (Math.hypot(dx, dy) > 26) {
-    helper.dir = directionFromDelta(dx, dy);
+  if (guardDistance > 24) {
+    helper.dir = directionFromDelta(guardX - hc.x, guardY - hc.y);
     moveTank(game, helper, dt);
+  } else if (target) {
+    const t = centerOf(target);
+    helper.dir = directionFromDelta(t.x - hc.x, t.y - hc.y);
+    if (distance(helper, target) < HELPER_FIRE_RANGE) fireHelperBullet(game, helper, target, audio);
   }
 }
 
@@ -1613,7 +1617,7 @@ function snapshot(game: Game) {
     muted: game.muted,
     boost: game.speedBoostTimer,
     drones: game.friendlyDrones.length,
-    helper: "Fast Support",
+    helper: "Bodyguard",
     fastActive: game.enemies.filter((enemy) => enemy.fast).length,
     enemyDroneMode: game.enemyDroneAggroTimer > 0 ? "Attacking" : "Patrolling",
     enemyDrone: game.enemyDrone ? "Active" : game.enemyDroneDestroyed ? "Destroyed" : "Offline",
@@ -1832,7 +1836,7 @@ export default function TankarGamePage() {
           <span>Lives: {hud.lives}/3</span>
           <span>HP: {hud.hp}/10</span>
           <span>Kills: {hud.kills}/20</span>
-          <span>Enemy Tanks: {hud.active}/6</span>
+          <span>Enemy Tanks: {hud.active}/4</span>
           <span className="assistantOk">Friend Drone: {hud.drones}</span>
           <span className="boost">Fast Tanks: {hud.fastActive}/4</span>
           <span className="boss">Boss: {hud.bossActive ? `${hud.bossHp}/160` : "Respawn"}</span>
@@ -1861,7 +1865,7 @@ export default function TankarGamePage() {
         </div>
       </section>
 
-      <section className="help">Move only: WASD/Arrows or mobile D-pad · player auto-fires · only 1 enemy tank active · enemy tank targets you only when close · boss can fire on drones · Fullscreen: F</section>
+      <section className="help">Move only: WASD/Arrows or mobile D-pad · player auto-fires · 4 enemy tanks active · only one red boss tank · helper guards nearby and attacks · Fullscreen: F</section>
       <section className="rotateHint">Rotate for best gameplay</section>
 
       {!loaderReady && (
@@ -1869,7 +1873,7 @@ export default function TankarGamePage() {
           <div className="panel loaderPanel">
             <p className="eyebrow">Loading Game</p>
             <h1>TANKAR</h1>
-            <p>Loading the larger grid battlefield, 1 circular friend drone, 1 red enemy drone, 1 active enemy tank, always-active red boss tank, helper tank, readable walls, controls, and safety information.</p>
+            <p>Loading the larger grid battlefield, 1 circular friend drone, 1 enemy drone, 4 active white enemy tanks, one always-active red boss tank, close-guard helper tank, readable walls, controls, and safety information.</p>
             <div className="loaderBar"><span /></div>
             <nav className="policyLinks" aria-label="Game policy links">
               <a href="terms/">Terms</a>
@@ -1893,7 +1897,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Desktop · Mobile · Android TV</p>
                 <h1>TANKAR BATTLE</h1>
-                <p>Destroy 20 white enemy tanks one at a time, protect the golden tank, and survive the always-active red boss tank. Enemy tanks only target you when you move close, while the boss can also shoot at your friend drone.</p>
+                <p>Destroy 20 white enemy tanks while one red boss tank stays active. Enemy tanks only target you when close, the helper stays around your golden tank, and the helper can attack fast tanks, the boss, and nearby enemies.</p>
                 {!captchaVerified ? (
                   <div className="captchaBox" role="group" aria-label="Math access check">
                     <strong>Math Access Check</strong>
@@ -1948,7 +1952,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Mission complete</p>
                 <h1>VICTORY</h1>
-                <p>You destroyed 20 enemy tanks, cleared the red enemy drone, and survived the boss tank pressure.</p>
+                <p>You destroyed 20 enemy tanks, cleared the drone threat, and survived the single red boss tank pressure.</p>
                 <button className="primary" onClick={startGame} autoFocus>Play Again</button>
               </>
             )}
