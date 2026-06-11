@@ -12,7 +12,7 @@ type Rect = { x: number; y: number; w: number; h: number };
 
 type Wall = Rect & { id: number; kind: WallKind; hp: number; maxHp: number };
 type Terrain = Rect & { id: number; kind: TerrainKind };
-type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss"; dir: Dir; speed: number; cooldown: number; aiTimer: number; hp: number; fast?: boolean };
+type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss" | "helper"; dir: Dir; speed: number; cooldown: number; aiTimer: number; hp: number; fast?: boolean };
 type Drone = Rect & { id: string; team: "friendly" | "enemy"; speed: number; cooldown: number; angle: number; spark: number };
 type Bullet = Rect & { id: string; owner: Owner; sourceId: string; dir: Dir; speed: number; dead?: boolean };
 type Explosion = { id: string; x: number; y: number; t: number; life: number; size: number };
@@ -26,11 +26,14 @@ type Game = {
   walls: Wall[];
   terrain: Terrain[];
   player: Tank;
+  helper: Tank;
   enemies: Tank[];
   boss: Tank | null;
   friendlyDrones: Drone[];
   enemyDrone: Drone | null;
+  enemyDroneHp: number;
   enemyDroneDestroyed: boolean;
+  enemyDroneAggroTimer: number;
   missile: Missile | null;
   missileLaunched: boolean;
   bossDelay: number;
@@ -41,6 +44,7 @@ type Game = {
   playerHp: number;
   kills: number;
   normalSpawned: number;
+  fastSpawned: number;
   bossHp: number;
   bossSpawned: boolean;
   playerInvincible: number;
@@ -54,32 +58,37 @@ type Game = {
   speedBoostTimer: number;
 };
 
-const CELL = 44;
-const COLS = 25;
-const ROWS = 17;
+const CELL = 58;
+const COLS = 17;
+const ROWS = 11;
 const WORLD_W = COLS * CELL;
 const WORLD_H = ROWS * CELL;
 
-const PLAYER_SIZE = 34;
-const ENEMY_SIZE = 34;
+const PLAYER_SIZE = 54;
+const ENEMY_SIZE = 52;
+const HELPER_TANK_SIZE = 50;
 const BOSS_SIZE = ENEMY_SIZE;
-const FRIENDLY_DRONE_SIZE = 24;
-const ENEMY_DRONE_SIZE = 54;
+const FRIENDLY_DRONE_SIZE = 34;
+const ENEMY_DRONE_SIZE = 46;
 
-const TARGET_KILLS = 50;
-const ACTIVE_ENEMIES = 10;
+const TARGET_KILLS = 20;
+const ACTIVE_ENEMIES = 6;
+const ENEMY_MAX_HP = 40;
+const ENEMY_DRONE_MAX_HP = 120;
 const PLAYER_LIVES = 3;
 const PLAYER_HP_PER_LIFE = 10;
 const BOSS_MAX_HP = 80;
 
 const PLAYER_BASE_SPEED = 285;
 const PLAYER_BOOST_SPEED = 380;
-const ENEMY_SPEED = 50;
-const ENEMY_FAST_SPEED = 128;
-const MAX_FAST_ENEMIES = 4;
+const ENEMY_SPEED = 58;
+const ENEMY_FAST_SPEED = 162;
+const TOTAL_FAST_ENEMIES = 4;
+const ACTIVE_FAST_ENEMIES = 4;
 const BOSS_SPEED = 285;
-const FRIENDLY_DRONE_SPEED = 620;
-const ENEMY_DRONE_SPEED = 450;
+const FRIENDLY_DRONE_SPEED = 610;
+const ENEMY_DRONE_SPEED = 135;
+const HELPER_TANK_SPEED = 118;
 
 const EMPTY_INPUT: InputState = { up: false, down: false, left: false, right: false, fire: false };
 const DIRS: Dir[] = ["up", "right", "down", "left"];
@@ -152,6 +161,10 @@ function distance(a: Rect, b: Rect) {
   return Math.hypot(ac.x - bc.x, ac.y - bc.y);
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function rand(game: Game) {
   game.seed = (game.seed * 1664525 + 1013904223) >>> 0;
   return game.seed / 4294967296;
@@ -219,15 +232,17 @@ function buildTerrain(): Terrain[] {
   const rect = (gx: number, gy: number, gw: number, gh: number, kind: TerrainKind) => {
     terrain.push({ id: id++, kind, x: gx * CELL, y: gy * CELL, w: gw * CELL, h: gh * CELL });
   };
-  rect(3, 2, 4, 2, "grass");
-  rect(18, 2, 4, 2, "grass");
-  rect(3, 12, 4, 3, "grass");
-  rect(18, 12, 4, 3, "grass");
-  rect(10, 7, 5, 3, "grass");
-  rect(8, 4, 2, 3, "water");
-  rect(15, 4, 2, 3, "water");
-  rect(8, 11, 2, 3, "water");
-  rect(15, 11, 2, 3, "water");
+
+  // Larger readable terrain zones for the new big-cell battlefield.
+  rect(2, 1, 3, 1, "grass");
+  rect(12, 1, 3, 1, "grass");
+  rect(2, 8, 3, 2, "grass");
+  rect(12, 8, 3, 2, "grass");
+  rect(7, 4, 3, 3, "grass");
+  rect(5, 3, 1, 2, "water");
+  rect(11, 3, 1, 2, "water");
+  rect(5, 7, 1, 2, "water");
+  rect(11, 7, 1, 2, "water");
   return terrain;
 }
 
@@ -247,34 +262,32 @@ function buildWalls(): Wall[] {
     for (let y = gy; y < gy + gh; y++) for (let x = gx; x < gx + gw; x++) add(x, y, kind);
   };
 
-  // Open battlefield: walls are cover clusters, not forced barriers.
-  rect(5, 1, 2, 1, "brick");
-  rect(18, 1, 2, 1, "brick");
-  rect(11, 2, 3, 1, "stone");
-  rect(2, 5, 1, 3, "brick");
-  rect(6, 5, 1, 2, "stone");
-  rect(18, 5, 1, 2, "stone");
-  rect(22, 5, 1, 3, "brick");
-  rect(4, 8, 2, 1, "metal");
-  rect(19, 8, 2, 1, "metal");
-  rect(11, 5, 1, 2, "brick");
-  rect(13, 5, 1, 2, "brick");
-  rect(11, 11, 1, 2, "brick");
-  rect(13, 11, 1, 2, "brick");
-  rect(2, 10, 1, 3, "brick");
-  rect(22, 10, 1, 3, "brick");
-  rect(6, 13, 1, 2, "stone");
-  rect(18, 13, 1, 2, "stone");
-  rect(11, 15, 3, 1, "metal");
-  rect(5, 15, 2, 1, "brick");
-  rect(18, 15, 2, 1, "brick");
+  // Big readable cover blocks. Fewer cells keep movement clear on mobile.
+  rect(3, 1, 1, 1, "brick");
+  rect(13, 1, 1, 1, "brick");
+  rect(7, 1, 3, 1, "stone");
+  rect(1, 4, 1, 2, "brick");
+  rect(15, 4, 1, 2, "brick");
+  rect(4, 4, 1, 1, "metal");
+  rect(12, 4, 1, 1, "metal");
+  rect(7, 3, 1, 2, "brick");
+  rect(9, 3, 1, 2, "brick");
+  rect(7, 7, 1, 2, "brick");
+  rect(9, 7, 1, 2, "brick");
+  rect(4, 6, 1, 1, "stone");
+  rect(12, 6, 1, 1, "stone");
+  rect(1, 7, 1, 2, "brick");
+  rect(15, 7, 1, 2, "brick");
+  rect(7, 9, 3, 1, "metal");
+  rect(3, 9, 1, 1, "brick");
+  rect(13, 9, 1, 1, "brick");
 
   const clearZones: Rect[] = [
-    { x: 0, y: 0, w: CELL * 4, h: CELL * 4 },
-    { x: WORLD_W - CELL * 4, y: 0, w: CELL * 4, h: CELL * 4 },
-    { x: 0, y: WORLD_H - CELL * 4, w: CELL * 4, h: CELL * 4 },
-    { x: WORLD_W - CELL * 4, y: WORLD_H - CELL * 4, w: CELL * 4, h: CELL * 4 },
-    { x: CELL * 9, y: CELL * 6, w: CELL * 7, h: CELL * 5 },
+    { x: 0, y: 0, w: CELL * 3, h: CELL * 3 },
+    { x: WORLD_W - CELL * 3, y: 0, w: CELL * 3, h: CELL * 3 },
+    { x: 0, y: WORLD_H - CELL * 3, w: CELL * 3, h: CELL * 3 },
+    { x: WORLD_W - CELL * 3, y: WORLD_H - CELL * 3, w: CELL * 3, h: CELL * 3 },
+    { x: CELL * 6, y: CELL * 4, w: CELL * 5, h: CELL * 3 },
   ];
   return walls.filter((w) => !clearZones.some((z) => rectsOverlap(w, z)));
 }
@@ -283,10 +296,26 @@ function createPlayer(): Tank {
   return { id: "player", kind: "player", x: WORLD_W / 2 - PLAYER_SIZE / 2, y: WORLD_H / 2 - PLAYER_SIZE / 2, w: PLAYER_SIZE, h: PLAYER_SIZE, dir: "up", speed: PLAYER_BASE_SPEED, cooldown: 0, aiTimer: 0, hp: 0 };
 }
 
+function createHelperTank(player: Tank): Tank {
+  return {
+    id: "helper",
+    kind: "helper",
+    x: player.x - CELL * 1.05,
+    y: player.y + CELL * 0.85,
+    w: HELPER_TANK_SIZE,
+    h: HELPER_TANK_SIZE,
+    dir: "up",
+    speed: HELPER_TANK_SPEED,
+    cooldown: 0,
+    aiTimer: 0,
+    hp: 1,
+  };
+}
+
 function createFriendlyDrones(player: Tank): Drone[] {
   return [
-    { id: "drone-a", team: "friendly", x: player.x - 62, y: player.y + 40, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: 0, spark: 0 },
-    { id: "drone-b", team: "friendly", x: player.x + 62, y: player.y + 40, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: Math.PI, spark: 0 },
+    { id: "drone-a", team: "friendly", x: player.x - 92, y: player.y + 48, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: 0, spark: 0 },
+    { id: "drone-b", team: "friendly", x: player.x + 92, y: player.y + 48, w: FRIENDLY_DRONE_SIZE, h: FRIENDLY_DRONE_SIZE, speed: FRIENDLY_DRONE_SPEED, cooldown: 0, angle: Math.PI, spark: 0 },
   ];
 }
 
@@ -296,16 +325,20 @@ function createEnemyDrone(): Drone {
 
 function createGame(status: Status = "idle", muted = false): Game {
   const player = createPlayer();
+  const helper = createHelperTank(player);
   return {
     status,
     walls: buildWalls(),
     terrain: buildTerrain(),
     player,
+    helper,
     enemies: [],
     boss: null,
     friendlyDrones: createFriendlyDrones(player),
     enemyDrone: createEnemyDrone(),
+    enemyDroneHp: ENEMY_DRONE_MAX_HP,
     enemyDroneDestroyed: false,
+    enemyDroneAggroTimer: 0,
     missile: null,
     missileLaunched: false,
     bossDelay: 0,
@@ -316,6 +349,7 @@ function createGame(status: Status = "idle", muted = false): Game {
     playerHp: PLAYER_HP_PER_LIFE,
     kills: 0,
     normalSpawned: 0,
+    fastSpawned: 0,
     bossHp: 0,
     bossSpawned: false,
     playerInvincible: 0,
@@ -331,7 +365,7 @@ function createGame(status: Status = "idle", muted = false): Game {
 }
 
 function tankCollider(tank: Tank): Rect {
-  const inset = 6;
+  const inset = tank.kind === "helper" ? 7 : 8;
   return { x: tank.x + inset, y: tank.y + inset, w: tank.w - inset * 2, h: tank.h - inset * 2 };
 }
 
@@ -350,6 +384,7 @@ function isTankBlocked(game: Game, tank: Tank, nx: number, ny: number) {
   if (game.walls.some((w) => rectsOverlap(next, w))) return true;
   if (isWaterBlocked(game, next)) return true;
   if (tank.id !== "player" && rectsOverlap(next, tankCollider(game.player))) return true;
+  if (tank.id !== "helper" && rectsOverlap(next, tankCollider(game.helper))) return true;
   for (const e of game.enemies) if (e.id !== tank.id && rectsOverlap(next, tankCollider(e))) return true;
   if (game.boss && game.boss.id !== tank.id && rectsOverlap(next, tankCollider(game.boss))) return true;
   return false;
@@ -383,6 +418,7 @@ function isAreaFree(game: Game, r: Rect, allowPlayer = false) {
   if (game.walls.some((w) => rectsOverlap(r, w))) return false;
   if (isWaterBlocked(game, r)) return false;
   if (!allowPlayer && rectsOverlap(r, tankCollider(game.player))) return false;
+  if (rectsOverlap(r, tankCollider(game.helper))) return false;
   if (game.enemies.some((e) => rectsOverlap(r, tankCollider(e)))) return false;
   if (game.boss && rectsOverlap(r, tankCollider(game.boss))) return false;
   return true;
@@ -390,21 +426,21 @@ function isAreaFree(game: Game, r: Rect, allowPlayer = false) {
 
 function spawnNormalEnemies(game: Game) {
   const points = [
-    { gx: 1, gy: 1, dir: "down" as Dir }, { gx: 23, gy: 1, dir: "down" as Dir },
-    { gx: 1, gy: 15, dir: "up" as Dir }, { gx: 23, gy: 15, dir: "up" as Dir },
-    { gx: 12, gy: 1, dir: "down" as Dir }, { gx: 12, gy: 15, dir: "up" as Dir },
-    { gx: 4, gy: 1, dir: "down" as Dir }, { gx: 20, gy: 15, dir: "up" as Dir },
-    { gx: 1, gy: 8, dir: "right" as Dir }, { gx: 23, gy: 8, dir: "left" as Dir },
+    { gx: 1, gy: 1, dir: "down" as Dir }, { gx: 15, gy: 1, dir: "down" as Dir },
+    { gx: 1, gy: 9, dir: "up" as Dir }, { gx: 15, gy: 9, dir: "up" as Dir },
+    { gx: 8, gy: 1, dir: "down" as Dir }, { gx: 8, gy: 9, dir: "up" as Dir },
+    { gx: 1, gy: 5, dir: "right" as Dir }, { gx: 15, gy: 5, dir: "left" as Dir },
   ];
   let guard = 0;
-  while (game.enemies.length < ACTIVE_ENEMIES && game.normalSpawned < TARGET_KILLS && guard < 250) {
+  while (game.enemies.length < ACTIVE_ENEMIES && game.normalSpawned < TARGET_KILLS && guard < 200) {
     guard++;
     const p = points[(game.normalSpawned + guard) % points.length];
     const r = { x: p.gx * CELL + (CELL - ENEMY_SIZE) / 2, y: p.gy * CELL + (CELL - ENEMY_SIZE) / 2, w: ENEMY_SIZE, h: ENEMY_SIZE };
     if (!isAreaFree(game, r)) continue;
     const fastCount = game.enemies.filter((e) => e.fast).length;
-    const shouldBeFast = fastCount < MAX_FAST_ENEMIES && game.normalSpawned % 5 === 0;
-    game.enemies.push({ id: `enemy-${game.normalSpawned + 1}`, kind: "enemy", ...r, dir: p.dir, speed: shouldBeFast ? ENEMY_FAST_SPEED : ENEMY_SPEED, cooldown: 0.8 + rand(game) * 0.7, aiTimer: 0.2, hp: 4, fast: shouldBeFast });
+    const shouldBeFast = game.fastSpawned < TOTAL_FAST_ENEMIES && fastCount < ACTIVE_FAST_ENEMIES;
+    game.enemies.push({ id: `enemy-${game.normalSpawned + 1}`, kind: "enemy", ...r, dir: p.dir, speed: shouldBeFast ? ENEMY_FAST_SPEED : ENEMY_SPEED, cooldown: shouldBeFast ? 0.52 + rand(game) * 0.38 : 0.8 + rand(game) * 0.7, aiTimer: 0.2, hp: ENEMY_MAX_HP, fast: shouldBeFast });
+    if (shouldBeFast) game.fastSpawned++;
     game.normalSpawned++;
   }
 }
@@ -429,16 +465,16 @@ function fireBullet(game: Game, tank: Tank, owner: Owner, audio?: ArcadeAudio | 
   if (owner === "enemy" && tank.kind !== "boss" && hasActiveSourceBullet(game, tank.id)) return;
   const c = centerOf(tank);
   const vertical = tank.dir === "up" || tank.dir === "down";
-  const bw = vertical ? 6 : 13;
-  const bh = vertical ? 13 : 6;
+  const bw = vertical ? 8 : 17;
+  const bh = vertical ? 17 : 8;
   let x = c.x - bw / 2;
   let y = c.y - bh / 2;
   if (tank.dir === "up") y = tank.y - bh - 2;
   if (tank.dir === "down") y = tank.y + tank.h + 2;
   if (tank.dir === "left") x = tank.x - bw - 2;
   if (tank.dir === "right") x = tank.x + tank.w + 2;
-  game.bullets.push({ id: `b-${performance.now()}-${Math.random()}`, owner, sourceId: tank.id, x, y, w: bw, h: bh, dir: tank.dir, speed: owner === "player" ? 420 : tank.kind === "boss" ? 315 : 230 });
-  tank.cooldown = owner === "player" ? 0.07 : tank.kind === "boss" ? 0.36 : 1.15;
+  game.bullets.push({ id: `b-${performance.now()}-${Math.random()}`, owner, sourceId: tank.id, x, y, w: bw, h: bh, dir: tank.dir, speed: owner === "player" ? 470 : tank.kind === "boss" ? 315 : 235 });
+  tank.cooldown = owner === "player" ? 0.09 : tank.kind === "boss" ? 0.36 : 1.25;
   audio?.play("shoot");
 }
 
@@ -451,10 +487,10 @@ function fireDroneBullet(game: Game, drone: Drone, target: Rect, audio?: ArcadeA
   const horizontal = Math.abs(dx) > Math.abs(dy);
   const dir: Dir = horizontal ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
   const vertical = dir === "up" || dir === "down";
-  const bw = vertical ? 5 : 12;
-  const bh = vertical ? 12 : 5;
+  const bw = vertical ? 7 : 16;
+  const bh = vertical ? 16 : 7;
   game.bullets.push({ id: `db-${performance.now()}-${Math.random()}`, owner: "drone", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 650 });
-  drone.cooldown = 0.22;
+  drone.cooldown = 0.16;
   audio?.play("spark");
 }
 
@@ -470,8 +506,9 @@ function fireEnemyDroneBullet(game: Game, drone: Drone, target: Rect, audio?: Ar
   const vertical = dir === "up" || dir === "down";
   const bw = vertical ? 7 : 16;
   const bh = vertical ? 16 : 7;
-  game.bullets.push({ id: `edb-${performance.now()}-${Math.random()}`, owner: "enemy", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 470 });
-  drone.cooldown = 0.68;
+  game.bullets.push({ id: `edb-${performance.now()}-${Math.random()}`, owner: "enemy", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 345 });
+  game.enemyDroneAggroTimer = 3.8;
+  drone.cooldown = 1.05;
   audio?.play("shoot");
 }
 
@@ -501,12 +538,12 @@ function aimAtPlayer(game: Game, tank: Tank) {
 
 function spawnPowerUp(game: Game) {
   const candidates: Rect[] = [
-    { x: WORLD_W / 2 - 16, y: WORLD_H / 2 - 16, w: 32, h: 32 },
-    { x: CELL * 4, y: CELL * 4, w: 32, h: 32 },
-    { x: CELL * 20, y: CELL * 4, w: 32, h: 32 },
-    { x: CELL * 4, y: CELL * 13, w: 32, h: 32 },
-    { x: CELL * 20, y: CELL * 13, w: 32, h: 32 },
-    { x: CELL * 12, y: CELL * 8, w: 32, h: 32 },
+    { x: WORLD_W / 2 - 21, y: WORLD_H / 2 - 21, w: 42, h: 42 },
+    { x: CELL * 3, y: CELL * 3, w: 42, h: 42 },
+    { x: CELL * 13, y: CELL * 3, w: 42, h: 42 },
+    { x: CELL * 3, y: CELL * 8, w: 42, h: 42 },
+    { x: CELL * 13, y: CELL * 8, w: 42, h: 42 },
+    { x: CELL * 8, y: CELL * 5, w: 42, h: 42 },
   ];
   for (const c of candidates) {
     if (isAreaFree(game, c, true)) {
@@ -516,6 +553,37 @@ function spawnPowerUp(game: Game) {
       return;
     }
   }
+}
+
+function damageEnemyTank(game: Game, enemy: Tank, amount: number, audio?: ArcadeAudio | null) {
+  enemy.hp = Math.max(0, enemy.hp - amount);
+  game.shake = Math.max(game.shake, 0.035);
+  addExplosion(game, enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, 14);
+  audio?.play("hit");
+  if (enemy.hp <= 0) destroyEnemy(game, enemy.id, audio);
+}
+
+function destroyEnemyDrone(game: Game, audio?: ArcadeAudio | null) {
+  if (!game.enemyDrone) return;
+  const target = centerOf(game.enemyDrone);
+  addExplosion(game, target.x, target.y, 92, 0.55);
+  game.enemyDrone = null;
+  game.enemyDroneHp = 0;
+  game.enemyDroneDestroyed = true;
+  game.message = "ENEMY DRONE DESTROYED";
+  game.messageTimer = 1.8;
+  game.shake = Math.max(game.shake, 0.4);
+  audio?.play("boom");
+}
+
+function damageEnemyDrone(game: Game, amount: number, x: number, y: number, audio?: ArcadeAudio | null) {
+  if (!game.enemyDrone) return;
+  game.enemyDroneHp = Math.max(0, game.enemyDroneHp - amount);
+  game.enemyDrone.spark = 0.22;
+  game.shake = Math.max(game.shake, 0.04);
+  addExplosion(game, x, y, 16);
+  audio?.play("hit");
+  if (game.enemyDroneHp <= 0) destroyEnemyDrone(game, audio);
 }
 
 function destroyEnemy(game: Game, enemyId: string, audio?: ArcadeAudio | null) {
@@ -591,9 +659,9 @@ function enemyBulletThreatScore(game: Game, bullet: Bullet) {
 
 function getThreatBullets(game: Game) {
   return game.bullets
-    .filter((b) => b.owner === "enemy" && !b.dead)
+    .filter((b) => b.owner === "enemy" && b.sourceId !== "enemy-drone" && !b.dead)
     .map((b) => ({ bullet: b, score: enemyBulletThreatScore(game, b) }))
-    .filter((x) => x.score < 420)
+    .filter((x) => x.score < 520)
     .sort((a, b) => a.score - b.score)
     .map((x) => x.bullet);
 }
@@ -615,58 +683,38 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
       }
 
       if (bullet.owner === "enemy") {
+        if (bullet.sourceId !== "enemy-drone" && rectsOverlap(bullet, tankCollider(game.helper))) {
+          bullet.dead = true;
+          game.helper.cooldown = 0.18;
+          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 18);
+          audio?.play("spark");
+          break;
+        }
         if (rectsOverlap(bullet, tankCollider(game.player))) { bullet.dead = true; damagePlayer(game, audio); break; }
       }
 
       if (bullet.owner === "drone") {
+        if (game.enemyDrone && rectsOverlap(bullet, game.enemyDrone)) {
+          bullet.dead = true;
+          damageEnemyDrone(game, 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
+          break;
+        }
         const enemy = game.enemies.find((e) => rectsOverlap(bullet, tankCollider(e)));
         if (enemy) {
           bullet.dead = true;
-          enemy.hp = Math.max(0, enemy.hp - 1);
-          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 14);
-          audio?.play("hit");
-          if (enemy.hp <= 0) destroyEnemy(game, enemy.id, audio);
-          break;
-        }
-        if (game.boss && rectsOverlap(bullet, tankCollider(game.boss))) {
-          bullet.dead = true;
-          game.bossHp--;
-          game.boss.hp = game.bossHp;
-          game.shake = 0.05;
-          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 14);
-          audio?.play("hit");
-          if (game.bossHp <= 0) {
-            addExplosion(game, game.boss.x + game.boss.w / 2, game.boss.y + game.boss.h / 2, 90, 0.55);
-            game.boss = null;
-            game.status = "victory";
-            game.message = "VICTORY";
-            game.messageTimer = 4;
-            audio?.play("win");
-          }
+          damageEnemyTank(game, enemy, 1, audio);
           break;
         }
       }
 
       if (bullet.owner === "player") {
-        const enemy = game.enemies.find((e) => rectsOverlap(bullet, tankCollider(e)));
-        if (enemy) { bullet.dead = true; destroyEnemy(game, enemy.id, audio); break; }
-        if (game.boss && rectsOverlap(bullet, tankCollider(game.boss))) {
+        if (game.enemyDrone && rectsOverlap(bullet, game.enemyDrone)) {
           bullet.dead = true;
-          game.bossHp--;
-          if (game.boss) game.boss.hp = game.bossHp;
-          game.shake = 0.1;
-          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 18);
-          audio?.play("hit");
-          if (game.bossHp <= 0) {
-            addExplosion(game, game.boss.x + game.boss.w / 2, game.boss.y + game.boss.h / 2, 90, 0.55);
-            game.boss = null;
-            game.status = "victory";
-            game.message = "VICTORY";
-            game.messageTimer = 4;
-            audio?.play("win");
-          }
+          damageEnemyDrone(game, 1, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, audio);
           break;
         }
+        const enemy = game.enemies.find((e) => rectsOverlap(bullet, tankCollider(e)));
+        if (enemy) { bullet.dead = true; damageEnemyTank(game, enemy, 1, audio); break; }
       }
     }
   }
@@ -683,17 +731,6 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
         b.dead = true;
         addExplosion(game, (a.x + b.x) / 2, (a.y + b.y) / 2, 16);
         audio?.play("hit");
-      }
-    }
-  }
-
-  for (const drone of game.friendlyDrones) {
-    for (const b of game.bullets) {
-      if (b.owner === "enemy" && !b.dead && rectsOverlap(drone, b)) {
-        b.dead = true;
-        drone.spark = 0.22;
-        addExplosion(game, b.x + b.w / 2, b.y + b.h / 2, 18);
-        audio?.play("spark");
       }
     }
   }
@@ -759,18 +796,58 @@ function updatePlayer(game: Game, input: InputState, dt: number, audio?: ArcadeA
   }
 }
 
-function nearestDroneAttackTarget(game: Game, drone: Drone): Tank | null {
-  if (game.boss) return game.boss;
-  let best: Tank | null = null;
-  let bestDistance = Infinity;
-  for (const enemy of game.enemies) {
-    const d = distance(drone, enemy);
-    if (d < bestDistance) {
-      best = enemy;
-      bestDistance = d;
+function nearestDroneAttackTarget(game: Game, drone: Drone, reservedTargets: Set<string>): Tank | null {
+  const priorityGroups = [
+    game.enemies.filter((enemy) => enemy.fast && !reservedTargets.has(enemy.id)),
+    game.enemies.filter((enemy) => !enemy.fast && !reservedTargets.has(enemy.id)),
+  ];
+
+  for (const group of priorityGroups) {
+    let best: Tank | null = null;
+    let bestDistance = Infinity;
+    for (const enemy of group) {
+      const d = distance(drone, enemy);
+      if (d < bestDistance) {
+        best = enemy;
+        bestDistance = d;
+      }
     }
+    if (best) return best;
   }
-  return best;
+
+  return null;
+}
+
+function updateHelperTank(game: Game, dt: number, audio?: ArcadeAudio | null) {
+  const helper = game.helper;
+  helper.cooldown = Math.max(0, helper.cooldown - dt);
+  const threats = getThreatBullets(game);
+  const pc = centerOf(game.player);
+  const targetBullet = threats[0];
+
+  if (targetBullet) {
+    const t = centerOf(targetBullet);
+    const h = centerOf(helper);
+    helper.dir = Math.abs(t.x - h.x) > Math.abs(t.y - h.y) ? (t.x < h.x ? "left" : "right") : t.y < h.y ? "up" : "down";
+    moveTank(game, helper, dt);
+    if (distance(helper, targetBullet) < 48) {
+      targetBullet.dead = true;
+      helper.cooldown = 0.22;
+      addExplosion(game, t.x, t.y, 20);
+      audio?.play("spark");
+    }
+    return;
+  }
+
+  const guardX = pc.x - 95;
+  const guardY = pc.y + 76;
+  const hc = centerOf(helper);
+  const dx = guardX - hc.x;
+  const dy = guardY - hc.y;
+  if (Math.hypot(dx, dy) > 26) {
+    helper.dir = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
+    moveTank(game, helper, dt * 0.7);
+  }
 }
 
 function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
@@ -783,71 +860,54 @@ function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
     game.enemyDrone.spark = Math.max(0, game.enemyDrone.spark - dt);
   }
 
-  const threats = getThreatBullets(game);
   const pc = centerOf(game.player);
 
   if (game.enemyDrone) {
     const red = game.enemyDrone;
     const nearestFriendly = game.friendlyDrones.reduce((best, d) => distance(d, red) < distance(best, red) ? d : best, game.friendlyDrones[0]);
-    if (nearestFriendly && distance(red, nearestFriendly) < 300) {
+    const dronePressure = nearestFriendly && distance(red, nearestFriendly) < 290;
+    if (dronePressure) {
       const fc = centerOf(nearestFriendly);
-      moveDroneToward(red, fc.x, fc.y, dt, 0.95);
+      moveDroneToward(red, fc.x, fc.y, dt, 0.5);
+      if (distance(red, nearestFriendly) < 385) fireEnemyDroneBullet(game, red, nearestFriendly, audio);
     } else {
-      moveDroneToward(red, pc.x, pc.y, dt, 0.72);
+      moveDroneToward(red, pc.x, pc.y, dt, 0.38);
+      if (distance(red, game.player) < 455) fireEnemyDroneBullet(game, red, game.player, audio);
     }
-    if (distance(red, game.player) < 560) fireEnemyDroneBullet(game, red, game.player, audio);
   }
+
+  const reservedTargets = new Set<string>();
 
   for (let i = 0; i < game.friendlyDrones.length; i++) {
     const drone = game.friendlyDrones[i];
-    const targetBullet = threats[i] || threats[0];
-    let slow = 1;
+    const attackTarget = nearestDroneAttackTarget(game, drone, reservedTargets);
 
-    if (game.enemyDrone && distance(drone, game.enemyDrone) < 82) {
-      slow = 0.48;
-      drone.spark = 0.16;
-      game.enemyDrone.spark = 0.16;
-      if (Math.floor(game.time * 16) % 7 === 0) addExplosion(game, (drone.x + game.enemyDrone.x) / 2, (drone.y + game.enemyDrone.y) / 2, 10, 0.16);
-    }
-
-    if (targetBullet) {
-      const t = centerOf(targetBullet);
-      moveDroneToward(drone, t.x, t.y, dt, slow);
-      if (distance(drone, targetBullet) < 34) {
-        targetBullet.dead = true;
-        drone.spark = 0.24;
-        addExplosion(game, t.x, t.y, 18);
-        audio?.play("spark");
-      } else if (distance(drone, targetBullet) < 300) {
-        fireDroneBullet(game, drone, targetBullet, audio);
-      }
+    if (attackTarget) {
+      reservedTargets.add(attackTarget.id);
+      const tc = centerOf(attackTarget);
+      const sideOffset = i === 0 ? -56 : 56;
+      const chaseSlow = attackTarget.fast ? 0.95 : 0.82;
+      moveDroneToward(drone, tc.x + sideOffset, tc.y - 48, dt, chaseSlow);
+      if (distance(drone, attackTarget) < 500) fireDroneBullet(game, drone, attackTarget, audio);
       continue;
     }
 
-    if (game.enemyDrone && distance(game.enemyDrone, game.player) < 340) {
+    if (game.enemyDrone && game.enemyDroneAggroTimer > 0) {
       const ec = centerOf(game.enemyDrone);
-      moveDroneToward(drone, ec.x + (i === 0 ? -22 : 22), ec.y, dt, slow);
-      if (distance(drone, game.enemyDrone) < 58) {
+      const ring = i === 0 ? -58 : 58;
+      moveDroneToward(drone, ec.x + ring, ec.y - 32, dt, 0.92);
+      if (distance(drone, game.enemyDrone) < 470) fireDroneBullet(game, drone, game.enemyDrone, audio);
+      if (distance(drone, game.enemyDrone) < 46) {
         drone.spark = 0.22;
         game.enemyDrone.spark = 0.22;
-        addExplosion(game, ec.x, ec.y, 12, 0.14);
-        audio?.play("spark");
+        damageEnemyDrone(game, 1, ec.x, ec.y, audio);
       }
       continue;
     }
 
-    const attackTarget = nearestDroneAttackTarget(game, drone);
-    if (attackTarget) {
-      const tc = centerOf(attackTarget);
-      const sideOffset = i === 0 ? -42 : 42;
-      moveDroneToward(drone, tc.x + sideOffset, tc.y - 44, dt, slow * 0.86);
-      if (distance(drone, attackTarget) < 430) fireDroneBullet(game, drone, attackTarget, audio);
-      continue;
-    }
-
-    const guardX = pc.x + (i === 0 ? -86 : 86);
-    const guardY = pc.y + 48;
-    moveDroneToward(drone, guardX, guardY, dt, 0.68);
+    const guardX = pc.x + (i === 0 ? -104 : 104);
+    const guardY = pc.y + 60;
+    moveDroneToward(drone, guardX, guardY, dt, 0.7);
   }
 }
 
@@ -893,11 +953,13 @@ function updateGame(game: Game, input: InputState, dt: number, audio?: ArcadeAud
   game.playerInvincible = Math.max(0, game.playerInvincible - dt);
   game.messageTimer = Math.max(0, game.messageTimer - dt);
   game.speedBoostTimer = Math.max(0, game.speedBoostTimer - dt);
+  game.enemyDroneAggroTimer = Math.max(0, game.enemyDroneAggroTimer - dt);
 
   updatePlayer(game, input, dt, audio);
   updateEnemies(game, dt, audio);
   updateBoss(game, dt, audio);
   updateDrones(game, dt, audio);
+  updateHelperTank(game, dt, audio);
   updateBullets(game, dt, audio);
   updateMissile(game, dt, audio);
 
@@ -906,13 +968,14 @@ function updateGame(game: Game, input: InputState, dt: number, audio?: ArcadeAud
   for (const e of game.explosions) e.t += dt;
   game.explosions = game.explosions.filter((e) => e.t < e.life);
 
-  if (game.kills >= TARGET_KILLS && game.enemies.length === 0 && !game.bossSpawned) {
-    if (game.enemyDrone && !game.missileLaunched) launchMissile(game, audio);
-    if (game.enemyDroneDestroyed) {
-      game.bossDelay = Math.max(0, game.bossDelay - dt);
-      if (game.bossDelay <= 0) spawnBoss(game, audio);
+  if (game.kills >= TARGET_KILLS && game.normalSpawned >= TARGET_KILLS) {
+    if (game.enemies.length === 0 && !game.enemyDrone) {
+      game.status = "victory";
+      game.message = "VICTORY";
+      game.messageTimer = 4;
+      audio?.play("win");
     }
-  } else if (!game.bossSpawned) {
+  } else {
     spawnNormalEnemies(game);
   }
 }
@@ -1001,37 +1064,141 @@ function drawMetal(ctx: CanvasRenderingContext2D, w: Wall) {
   ctx.fillRect(w.x + 29, w.y + 29, 6, 6);
 }
 
+function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+}
+
+function fillRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: string) {
+  roundedRectPath(ctx, x, y, w, h, r);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
 function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invincible = false) {
   if (invincible && Math.floor(performance.now() / 90) % 2 === 0) return;
   const inGrass = isInGrass(game, tankCollider(tank));
   if (inGrass) ctx.globalAlpha = 0.62;
+
   const angle = tank.dir === "up" ? 0 : tank.dir === "right" ? Math.PI / 2 : tank.dir === "down" ? Math.PI : -Math.PI / 2;
   const cx = tank.x + tank.w / 2;
   const cy = tank.y + tank.h / 2;
-  let body = "#f3bb4b";
-  let tread = "#8b5b1c";
-  let top = "#ffe28a";
-  if (tank.kind === "enemy") { body = tank.fast ? "#fb923c" : "#28c76f"; tread = tank.fast ? "#7c2d12" : "#116b3b"; top = tank.fast ? "#fed7aa" : "#a8ffd0"; }
-  if (tank.kind === "boss") { body = "#e5314f"; tread = "#4a0c18"; top = "#ff9aad"; }
+  const w = tank.w;
+  const h = tank.h;
+
+  let body = "#f2b705";
+  let body2 = "#ffd866";
+  let tread = "#6b4213";
+  let stroke = "#fff2a8";
+  let lens = "#fff7cf";
+
+  if (tank.kind === "enemy") {
+    body = "#f8fafc";
+    body2 = tank.fast ? "#ffffff" : "#e2e8f0";
+    tread = "#475569";
+    stroke = tank.fast ? "#f59e0b" : "#cbd5e1";
+    lens = tank.fast ? "#fb923c" : "#94a3b8";
+  }
+  if (tank.kind === "helper") {
+    body = "#38bdf8";
+    body2 = "#dff7ff";
+    tread = "#075985";
+    stroke = "#e0f2fe";
+    lens = "#ecfeff";
+  }
+  if (tank.kind === "boss") {
+    body = "#e5314f";
+    body2 = "#ff9aad";
+    tread = "#4a0c18";
+    stroke = "#fecdd3";
+    lens = "#fee2e2";
+  }
+
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(angle);
-  ctx.fillStyle = tread;
-  ctx.fillRect(-tank.w / 2, -tank.h / 2, 8, tank.h);
-  ctx.fillRect(tank.w / 2 - 8, -tank.h / 2, 8, tank.h);
-  ctx.fillStyle = "#111827";
-  for (let y = -tank.h / 2 + 3; y < tank.h / 2; y += 8) {
-    ctx.fillRect(-tank.w / 2 + 1, y, 6, 3);
-    ctx.fillRect(tank.w / 2 - 7, y, 6, 3);
+
+  ctx.shadowColor = tank.kind === "player" ? "rgba(250,204,21,0.3)" : tank.fast ? "rgba(251,146,60,0.24)" : "rgba(0,0,0,0.25)";
+  ctx.shadowBlur = tank.kind === "player" || tank.fast ? 12 : 6;
+
+  fillRoundedRect(ctx, -w * 0.5, -h * 0.42, w * 0.22, h * 0.84, 6, tread);
+  fillRoundedRect(ctx, w * 0.28, -h * 0.42, w * 0.22, h * 0.84, 6, tread);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "rgba(15,23,42,0.88)";
+  for (let y = -h * 0.34; y <= h * 0.32; y += h * 0.18) {
+    fillRoundedRect(ctx, -w * 0.47, y, w * 0.16, h * 0.055, 3, "rgba(15,23,42,0.9)");
+    fillRoundedRect(ctx, w * 0.31, y, w * 0.16, h * 0.055, 3, "rgba(15,23,42,0.9)");
   }
-  ctx.fillStyle = body;
-  ctx.fillRect(-tank.w / 2 + 8, -tank.h / 2 + 4, tank.w - 16, tank.h - 8);
-  ctx.fillStyle = top;
-  ctx.fillRect(-tank.w * 0.24, -tank.h * 0.3, tank.w * 0.48, tank.h * 0.6);
-  ctx.fillStyle = body;
-  ctx.fillRect(-4, -tank.h / 2 - tank.h * 0.38, 8, tank.h * 0.58);
-  ctx.fillStyle = "#fff6c6";
-  ctx.fillRect(-tank.w / 2 + 12, -tank.h / 2 + 8, 6, 6);
+
+  const gradient = ctx.createLinearGradient(0, -h * 0.42, 0, h * 0.42);
+  gradient.addColorStop(0, body2);
+  gradient.addColorStop(0.54, body);
+  gradient.addColorStop(1, tank.kind === "enemy" ? "#cbd5e1" : body);
+  roundedRectPath(ctx, -w * 0.31, -h * 0.45, w * 0.62, h * 0.9, 10);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+
+  fillRoundedRect(ctx, -w * 0.095, -h * 0.71, w * 0.19, h * 0.47, 4, body);
+  fillRoundedRect(ctx, -w * 0.065, -h * 0.82, w * 0.13, h * 0.18, 3, stroke);
+
+  ctx.beginPath();
+  ctx.arc(0, -h * 0.03, w * 0.19, 0, Math.PI * 2);
+  ctx.fillStyle = body2;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-w * 0.17, h * 0.18);
+  ctx.lineTo(0, h * 0.31);
+  ctx.lineTo(w * 0.17, h * 0.18);
+  ctx.strokeStyle = tank.kind === "enemy" ? "rgba(71,85,105,0.7)" : "rgba(0,0,0,0.32)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  if (tank.fast) {
+    ctx.fillStyle = "#f97316";
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.26, -h * 0.22);
+    ctx.lineTo(w * 0.1, -h * 0.22);
+    ctx.lineTo(-w * 0.04, h * 0.02);
+    ctx.lineTo(w * 0.25, h * 0.02);
+    ctx.lineTo(-w * 0.1, h * 0.26);
+    ctx.lineTo(w * 0.02, h * 0.07);
+    ctx.lineTo(-w * 0.25, h * 0.07);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  if (tank.kind === "helper") {
+    ctx.strokeStyle = "#e0f2fe";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, -1, w * 0.28, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "#0ea5e9";
+    ctx.fillRect(-w * 0.18, h * 0.31, w * 0.36, 4);
+  }
+
+  ctx.fillStyle = lens;
+  ctx.beginPath();
+  ctx.arc(-w * 0.17, -h * 0.29, Math.max(3, w * 0.055), 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
   ctx.globalAlpha = 1;
 }
@@ -1039,30 +1206,42 @@ function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invinci
 function drawDrone(ctx: CanvasRenderingContext2D, drone: Drone) {
   const cx = drone.x + drone.w / 2;
   const cy = drone.y + drone.h / 2;
+  const r = drone.w / 2;
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(drone.angle);
-  if (drone.team === "friendly") {
-    ctx.fillStyle = "#bfdbfe";
-    ctx.fillRect(-drone.w / 2, -5, drone.w, 10);
-    ctx.fillRect(-5, -drone.h / 2, 10, drone.h);
-    ctx.fillStyle = "#2563eb";
-    ctx.fillRect(-7, -7, 14, 14);
-    ctx.fillStyle = "#eff6ff";
-    ctx.fillRect(-3, -3, 6, 6);
-  } else {
-    ctx.fillStyle = "#7f1d1d";
-    ctx.fillRect(-drone.w / 2, -9, drone.w, 18);
-    ctx.fillRect(-9, -drone.h / 2, 18, drone.h);
-    ctx.fillStyle = "#ef4444";
-    ctx.fillRect(-14, -14, 28, 28);
-    ctx.fillStyle = "#fecaca";
-    ctx.fillRect(-4, -4, 8, 8);
-  }
+
+  const isFriendly = drone.team === "friendly";
+  ctx.fillStyle = isFriendly ? "#1d4ed8" : "#991b1b";
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = isFriendly ? "#bfdbfe" : "#ef4444";
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.68, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = isFriendly ? "#eff6ff" : "#fee2e2";
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = isFriendly ? "rgba(191,219,254,0.9)" : "rgba(254,202,202,0.95)";
+  ctx.lineWidth = Math.max(3, r * 0.14);
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.15, 0.4, Math.PI * 1.35);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.15, Math.PI + 0.4, Math.PI * 2.35);
+  ctx.stroke();
+
   if (drone.spark > 0) {
     ctx.strokeStyle = "#fef08a";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-drone.w / 2 - 4, -drone.h / 2 - 4, drone.w + 8, drone.h + 8);
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 8, 0, Math.PI * 2);
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -1093,19 +1272,29 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
 
   const portrait = cssH > cssW;
   const small = cssW < 900;
-  const safeTop = small ? 96 : 88;
-  const safeBottom = portrait ? 238 : small ? 142 : 76;
+  const safeTop = small ? 92 : 84;
+  const safeBottom = portrait ? 200 : small ? 132 : 58;
   const availableW = cssW;
-  const availableH = Math.max(120, cssH - safeTop - safeBottom);
-  const scale = Math.min(availableW / WORLD_W, availableH / WORLD_H);
-  const ox = (cssW - WORLD_W * scale) / 2;
-  const oy = safeTop + (availableH - WORLD_H * scale) / 2;
+  const availableH = Math.max(160, cssH - safeTop - safeBottom);
+  const fitScale = Math.min(availableW / WORLD_W, availableH / WORLD_H);
+  const readableScale = portrait ? 0.62 : small ? 0.82 : 1;
+  const scale = Math.max(fitScale, readableScale);
+  const viewportW = availableW / scale;
+  const viewportH = availableH / scale;
+  const pc = centerOf(game.player);
+  const cameraX = viewportW >= WORLD_W ? -(viewportW - WORLD_W) / 2 : clamp(pc.x - viewportW / 2, 0, WORLD_W - viewportW);
+  const cameraY = viewportH >= WORLD_H ? -(viewportH - WORLD_H) / 2 : clamp(pc.y - viewportH / 2, 0, WORLD_H - viewportH);
+  const ox = -cameraX * scale;
+  const oy = safeTop - cameraY * scale;
   const shakeX = game.shake > 0 ? Math.sin(game.time * 80) * game.shake * 16 : 0;
   const shakeY = game.shake > 0 ? Math.cos(game.time * 70) * game.shake * 12 : 0;
 
   ctx.fillStyle = "#020403";
   ctx.fillRect(0, 0, cssW, cssH);
   ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, safeTop, cssW, availableH);
+  ctx.clip();
   ctx.translate(ox + shakeX, oy + shakeY);
   ctx.scale(scale, scale);
   ctx.imageSmoothingEnabled = false;
@@ -1133,12 +1322,13 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
     ctx.fillStyle = "#60a5fa";
     ctx.fillRect(p.x, p.y, p.w, p.h);
     ctx.fillStyle = "#dbeafe";
-    ctx.fillRect(p.x + 12, p.y + 3, 8, 10);
-    ctx.fillRect(p.x + 10, p.y + 11, 8, 10);
-    ctx.fillRect(p.x + 14, p.y + 19, 8, 10);
+    ctx.fillRect(p.x + p.w * 0.38, p.y + p.h * 0.12, p.w * 0.24, p.h * 0.28);
+    ctx.fillRect(p.x + p.w * 0.30, p.y + p.h * 0.38, p.w * 0.24, p.h * 0.28);
+    ctx.fillRect(p.x + p.w * 0.46, p.y + p.h * 0.60, p.w * 0.24, p.h * 0.28);
     ctx.globalAlpha = 1;
   }
 
+  drawTank(ctx, game, game.helper);
   drawTank(ctx, game, game.player, game.playerInvincible > 0);
   for (const enemy of game.enemies) drawTank(ctx, game, enemy);
   if (game.boss) drawTank(ctx, game, game.boss);
@@ -1190,12 +1380,15 @@ function snapshot(game: Game) {
     lives: game.lives,
     hp: game.playerHp,
     kills: game.kills,
-    active: game.enemies.length + (game.boss ? 1 : 0),
+    active: game.enemies.length,
     bossHp: game.bossHp,
     bossSpawned: game.bossSpawned,
     muted: game.muted,
     boost: game.speedBoostTimer,
     drones: game.friendlyDrones.length,
+    helper: "Online",
+    fastActive: game.enemies.filter((enemy) => enemy.fast).length,
+    enemyDroneMode: game.enemyDroneAggroTimer > 0 ? "Attacking" : "Patrolling",
     enemyDrone: game.enemyDrone ? "Active" : game.enemyDroneDestroyed ? "Destroyed" : "Offline",
   };
 }
@@ -1413,12 +1606,13 @@ export default function TankarGamePage() {
         <div className="stats">
           <span>Lives: {hud.lives}/3</span>
           <span>HP: {hud.hp}/10</span>
-          <span>Kills: {hud.kills}/50</span>
-          <span>Active: {hud.active}</span>
-          <span className="assistantOk">Friendly Drones: {hud.drones}</span>
-          <span className={hud.enemyDrone === "Active" ? "enemyDrone" : "assistantDown"}>Enemy Drone: {hud.enemyDrone}</span>
+          <span>Kills: {hud.kills}/20</span>
+          <span>Enemy Tanks: {hud.active}/6</span>
+          <span className="assistantOk">Drones: {hud.drones}</span>
+          <span className="boost">Fast Tanks: {hud.fastActive}/4</span>
+          <span className="helperOk">Helper Tank: {hud.helper}</span>
+          <span className={hud.enemyDrone === "Active" ? "enemyDrone" : "assistantDown"}>Enemy Drone: {hud.enemyDrone}{hud.enemyDrone === "Active" ? ` · ${hud.enemyDroneMode}` : ""}</span>
           {hud.boost > 0 && <span className="boost">Boost: {hud.boost.toFixed(1)}s</span>}
-          {hud.bossSpawned && <span className="boss">Boss HP: {hud.bossHp}/{BOSS_MAX_HP}</span>}
         </div>
         <div className="actions">
           <button onClick={toggleMute}>{hud.muted ? "Unmute" : "Mute"}</button>
@@ -1441,7 +1635,7 @@ export default function TankarGamePage() {
         </div>
       </section>
 
-      <section className="help">Desktop: WASD/Arrows + Space · TV: D-pad + OK/Enter · Mobile: D-pad + Fire · Drones block enemy bullets · Fullscreen: F</section>
+      <section className="help">Desktop: WASD/Arrows + Space · Mobile: D-pad + Fire · Drones split targets: fast tanks first, tanks next, red drone only after it attacks · Helper blocks enemy tank bullets · Fullscreen: F</section>
       <section className="rotateHint">Rotate for best gameplay</section>
 
       {!loaderReady && (
@@ -1449,7 +1643,7 @@ export default function TankarGamePage() {
           <div className="panel loaderPanel">
             <p className="eyebrow">Loading Game</p>
             <h1>TANKAR</h1>
-            <p>Loading battlefield, drone protection system, missile event, terrain, controls, and safety information.</p>
+            <p>Loading the larger battlefield, circular drones, helper tank, readable walls, controls, and safety information.</p>
             <div className="loaderBar"><span /></div>
             <nav className="policyLinks" aria-label="Game policy links">
               <a href="terms/">Terms</a>
@@ -1473,7 +1667,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Desktop · Mobile · Android TV</p>
                 <h1>TANKAR BATTLE</h1>
-                <p>Destroy 50 enemy tanks, use 2 blue drones to block bullets and attack enemies, and defeat the master tank. A parent/guardian style math check is required before play.</p>
+                <p>Destroy 20 white enemy tanks, protect the golden tank, and let 2 circular drones split targets. They hunt fast tanks first, normal tanks next, and only attack the red drone after it fires.</p>
                 {!captchaVerified ? (
                   <div className="captchaBox" role="group" aria-label="Math access check">
                     <strong>Math Access Check</strong>
@@ -1528,7 +1722,7 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Mission complete</p>
                 <h1>VICTORY</h1>
-                <p>You destroyed 50 tanks, cleared the enemy drone with a missile, and defeated the master enemy tank.</p>
+                <p>You destroyed 20 enemy tanks and cleared the red enemy drone.</p>
                 <button className="primary" onClick={startGame} autoFocus>Play Again</button>
               </>
             )}
@@ -1560,6 +1754,7 @@ export default function TankarGamePage() {
         .stats .boss { color: #fecdd3; border-color: rgba(248,113,113,0.45); background: rgba(127,29,29,0.45); }
         .stats .boost { color: #dbeafe; border-color: rgba(96,165,250,0.45); background: rgba(30,64,175,0.45); }
         .stats .assistantOk { color: #bbf7d0; border-color: rgba(74,222,128,0.38); background: rgba(20,83,45,0.48); }
+        .stats .helperOk { color: #bae6fd; border-color: rgba(56,189,248,0.42); background: rgba(7,89,133,0.48); }
         .stats .assistantDown { color: #fed7aa; border-color: rgba(251,146,60,0.38); background: rgba(124,45,18,0.48); }
         .stats .enemyDrone { color: #fecdd3; border-color: rgba(244,63,94,0.42); background: rgba(127,29,29,0.48); }
         .actions { display: flex; gap: 8px; }
