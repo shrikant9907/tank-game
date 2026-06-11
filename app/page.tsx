@@ -98,10 +98,10 @@ const ROWS = 23;
 const WORLD_W = COLS * CELL;
 const WORLD_H = ROWS * CELL;
 
-const PLAYER_SIZE = 28;
-const ENEMY_SIZE = 28;
-const ASSISTANT_SIZE = 26;
-const BOSS_SIZE = 62;
+const PLAYER_SIZE = 34;
+const ENEMY_SIZE = 34;
+const ASSISTANT_SIZE = 32;
+const BOSS_SIZE = 76;
 
 const TARGET_KILLS = 50;
 const ACTIVE_ENEMIES = 10;
@@ -109,8 +109,8 @@ const PLAYER_LIVES = 3;
 const PLAYER_HP_PER_LIFE = 10;
 const BOSS_MAX_HP = 20;
 
-const PLAYER_BASE_SPEED = 232;
-const PLAYER_BOOST_SPEED = 315;
+const PLAYER_BASE_SPEED = 270;
+const PLAYER_BOOST_SPEED = 355;
 const ENEMY_SPEED = 50;
 const ASSISTANT_SPEED = 365;
 const BOSS_SPEED = 135;
@@ -461,8 +461,8 @@ function spawnNormalEnemies(game: Game) {
     guard++;
     const p = points[(game.normalSpawned + guard) % points.length];
     const r = {
-      x: p.gx * CELL + (CELL - ENEMY_SIZE) / 2,
-      y: p.gy * CELL + (CELL - ENEMY_SIZE) / 2,
+      x: p.gx * CELL + Math.max(0, (CELL - ENEMY_SIZE) / 2),
+      y: p.gy * CELL + Math.max(0, (CELL - ENEMY_SIZE) / 2),
       w: ENEMY_SIZE,
       h: ENEMY_SIZE,
     };
@@ -1068,8 +1068,8 @@ function drawGame(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, game
 
   const portrait = cssH > cssW;
   const small = cssW < 900;
-  const safeTop = small ? 96 : 94;
-  const safeBottom = portrait ? 238 : small ? 142 : 82;
+  const safeTop = small ? 96 : 76;
+  const safeBottom = portrait ? 238 : small ? 142 : 48;
   const availableW = cssW;
   const availableH = Math.max(120, cssH - safeTop - safeBottom);
   const scale = Math.min(availableW / WORLD_W, availableH / WORLD_H);
@@ -1188,6 +1188,12 @@ export default function TankarGamePage() {
   const mutedRef = useRef(false);
   const gameRef = useRef<Game>(createGame("idle", false));
   const [hud, setHud] = useState(snapshot(gameRef.current));
+  const [loaderReady, setLoaderReady] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLoaderReady(true), 1350);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) audioRef.current = new ArcadeAudio();
@@ -1366,7 +1372,7 @@ export default function TankarGamePage() {
     };
   }, [ensureAudio, startGame, toggleFullscreen, toggleMute, togglePause]);
 
-  const overlayVisible = hud.status === "idle" || hud.status === "paused" || hud.status === "victory" || hud.status === "gameover";
+  const overlayVisible = loaderReady && (hud.status === "idle" || hud.status === "paused" || hud.status === "victory" || hud.status === "gameover");
 
   return (
     <main className="gameShell" onPointerCancel={clearTouch} onContextMenu={(e) => e.preventDefault()}>
@@ -1412,6 +1418,28 @@ export default function TankarGamePage() {
 
       <section className="rotateHint">Rotate for best gameplay</section>
 
+      {!loaderReady && (
+        <section className="overlay loaderOverlay" aria-label="Loading and policies">
+          <div className="panel loaderPanel">
+            <p className="eyebrow">Shrimo Innovations</p>
+            <h1>TANKAR</h1>
+            <p>Loading the battlefield, controls, assistant tank, terrain, and safety information.</p>
+            <div className="loaderBar"><span /></div>
+            <nav className="policyLinks" aria-label="Game policy links">
+              <a href="terms/">Terms</a>
+              <a href="privacy/">Privacy</a>
+              <a href="cookies/">Cookies</a>
+              <a href="responsible-gaming/">Responsible Play</a>
+              <a href="fair-play/">Fair Play</a>
+              <a href="refund/">Refund</a>
+              <a href="disclaimer/">Disclaimer</a>
+              <a href="contact/">Contact</a>
+            </nav>
+            <p className="legalNote">Free arcade game only. No real-money gaming, betting, gambling, prizes, or user-generated public chat.</p>
+          </div>
+        </section>
+      )}
+
       {overlayVisible && (
         <section className="overlay">
           <div className="panel">
@@ -1421,6 +1449,12 @@ export default function TankarGamePage() {
                 <h1>TANKAR BATTLE</h1>
                 <p>Destroy 50 slow enemy tanks, survive 10 hits per life, use grass for hiding, avoid water, collect speed powers, and defeat the master tank.</p>
                 <button className="primary" onClick={startGame} autoFocus>Start Game</button>
+                <nav className="policyLinks compact" aria-label="Policy links">
+                  <a href="terms/">Terms</a>
+                  <a href="privacy/">Privacy</a>
+                  <a href="responsible-gaming/">Responsible Play</a>
+                  <a href="contact/">Contact</a>
+                </nav>
               </>
             )}
             {hud.status === "paused" && (
@@ -1525,6 +1559,16 @@ export default function TankarGamePage() {
         h1 { margin: 0; font-size: clamp(42px, 7vw, 82px); line-height: 0.9; color: #fff; text-shadow: 4px 4px 0 #7f1d1d; }
         .panel p:not(.eyebrow) { margin: 18px auto 24px; max-width: 500px; color: rgba(255,255,255,0.74); line-height: 1.65; font-size: 15px; }
         .primary { min-width: 190px; min-height: 56px; padding: 12px 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; border-radius: 16px; }
+        .loaderPanel { overflow: hidden; }
+        .loaderBar { width: min(360px, 100%); height: 10px; margin: 18px auto 18px; border: 1px solid rgba(250,204,21,0.45); background: rgba(255,255,255,0.08); }
+        .loaderBar span { display: block; width: 100%; height: 100%; background: linear-gradient(90deg, #facc15, #fb7185, #60a5fa); transform-origin: left; animation: loadSweep 1.25s ease both; }
+        .policyLinks { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+        .policyLinks a { color: #fef3c7; text-decoration: none; border: 1px solid rgba(250,204,21,0.28); background: rgba(250,204,21,0.08); padding: 7px 9px; font-size: 11px; }
+        .policyLinks a:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+        .policyLinks a:hover { background: rgba(250,204,21,0.16); }
+        .policyLinks.compact { margin-top: 18px; }
+        .legalNote { font-size: 11px !important; line-height: 1.55 !important; color: rgba(255,255,255,0.6) !important; margin-bottom: 0 !important; }
+        @keyframes loadSweep { from { transform: scaleX(0.04); } to { transform: scaleX(1); } }
         @media (max-width: 920px), (pointer: coarse) {
           .touchControls { display: flex; }
           .help { font-size: 10px; bottom: max(8px, env(safe-area-inset-bottom)); }
@@ -1550,7 +1594,7 @@ export default function TankarGamePage() {
         }
         @media (min-width: 1200px) and (min-height: 680px) {
           .stats { font-size: 13px; }
-          .hud { min-height: 64px; }
+          .hud { min-height: 60px; }
         }
       `}</style>
     </main>
