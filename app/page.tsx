@@ -102,6 +102,57 @@ const FRIENDLY_DRONE_MAX_HP = 80;
 const EMPTY_INPUT: InputState = { up: false, down: false, left: false, right: false, fire: false };
 const DIRS: Dir[] = ["up", "right", "down", "left"];
 
+type RemoteKey = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "OK" | "Back" | "PlayPause" | "Menu" | "Mute" | "Fullscreen" | "Other";
+
+function getKeyboardNumber(e: KeyboardEvent) {
+  const extended = e as KeyboardEvent & { keyCode?: number; which?: number };
+  return extended.keyCode ?? extended.which ?? 0;
+}
+
+function normalizeRemoteKey(e: KeyboardEvent): RemoteKey {
+  const code = e.code || "";
+  const key = e.key || "";
+  const keyCode = getKeyboardNumber(e);
+
+  if (code === "ArrowUp" || key === "ArrowUp" || keyCode === 19 || keyCode === 38) return "ArrowUp";
+  if (code === "ArrowDown" || key === "ArrowDown" || keyCode === 20 || keyCode === 40) return "ArrowDown";
+  if (code === "ArrowLeft" || key === "ArrowLeft" || keyCode === 21 || keyCode === 37) return "ArrowLeft";
+  if (code === "ArrowRight" || key === "ArrowRight" || keyCode === 22 || keyCode === 39) return "ArrowRight";
+
+  if (code === "Enter" || code === "NumpadEnter" || code === "Space" || key === "Enter" || key === "OK" || key === "Select" || keyCode === 13 || keyCode === 23 || keyCode === 66) return "OK";
+  if (code === "Escape" || code === "Backspace" || code === "BrowserBack" || code === "GoBack" || key === "Escape" || key === "Back" || key === "BrowserBack" || keyCode === 4 || keyCode === 461 || keyCode === 166) return "Back";
+  if (code === "MediaPlayPause" || key === "MediaPlayPause" || keyCode === 179 || keyCode === 85) return "PlayPause";
+  if (code === "ContextMenu" || key === "ContextMenu" || key === "Menu" || keyCode === 82) return "Menu";
+  if (code === "KeyM" || keyCode === 164) return "Mute";
+  if (code === "KeyF") return "Fullscreen";
+  return "Other";
+}
+
+function isRemoteMovement(code: RemoteKey) {
+  return code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight";
+}
+
+function isRemoteAction(code: RemoteKey) {
+  return isRemoteMovement(code) || code === "OK" || code === "Back" || code === "PlayPause" || code === "Menu" || code === "Mute" || code === "Fullscreen";
+}
+
+function isAndroidTvDpadEvent(e: KeyboardEvent) {
+  const keyCode = getKeyboardNumber(e);
+  return keyCode === 19 || keyCode === 20 || keyCode === 21 || keyCode === 22 || keyCode === 23 || keyCode === 66 || keyCode === 4;
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+}
+
+function shouldKeepGameFocus(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return true;
+  const tag = target.tagName.toLowerCase();
+  return !(tag === "input" || tag === "textarea" || tag === "select" || tag === "button" || tag === "a" || target.isContentEditable);
+}
+
 const FONT: Record<string, string[]> = {
   A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
   H: ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
@@ -1826,6 +1877,7 @@ function snapshot(game: Game) {
 }
 
 export default function TankarGamePage() {
+  const shellRef = useRef<HTMLElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const keyboardRef = useRef<InputState>(copyInput(EMPTY_INPUT));
   const touchRef = useRef<InputState>(copyInput(EMPTY_INPUT));
@@ -1833,6 +1885,10 @@ export default function TankarGamePage() {
   const audioRef = useRef<ArcadeAudio | null>(null);
   const mutedRef = useRef(false);
   const gameRef = useRef<Game>(createGame("idle", false));
+  const captchaAnswerRef = useRef("");
+  const captchaRef = useRef<CaptchaChallenge | null>(null);
+  const captchaVerifiedRef = useRef(false);
+  const tvReleaseTimersRef = useRef<Record<string, number>>({});
   const [hud, setHud] = useState(snapshot(gameRef.current));
   const [loaderReady, setLoaderReady] = useState(false);
   const [captchaVerified, setCaptchaVerified] = useState(false);
@@ -1840,10 +1896,23 @@ export default function TankarGamePage() {
   const [captchaAnswer, setCaptchaAnswer] = useState("");
   const [captchaError, setCaptchaError] = useState("");
 
+  useEffect(() => { captchaAnswerRef.current = captchaAnswer; }, [captchaAnswer]);
+  useEffect(() => { captchaRef.current = captcha; }, [captcha]);
+  useEffect(() => { captchaVerifiedRef.current = captchaVerified; }, [captchaVerified]);
+
+  const focusGameShell = useCallback(() => {
+    window.setTimeout(() => shellRef.current?.focus({ preventScroll: true }), 0);
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => setLoaderReady(true), 1350);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!loaderReady) return;
+    focusGameShell();
+  }, [loaderReady, hud.status, focusGameShell]);
 
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) audioRef.current = new ArcadeAudio();
@@ -1874,6 +1943,7 @@ export default function TankarGamePage() {
   const startGame = useCallback(() => {
     if (!captchaVerified) {
       setCaptchaError("Solve the math check first to unlock the game.");
+      focusGameShell();
       return;
     }
     const audio = ensureAudio();
@@ -1883,8 +1953,9 @@ export default function TankarGamePage() {
     keyboardRef.current = copyInput(EMPTY_INPUT);
     touchRef.current = copyInput(EMPTY_INPUT);
     setHud(snapshot(game));
+    focusGameShell();
     audio.play("start");
-  }, [captchaVerified, ensureAudio]);
+  }, [captchaVerified, ensureAudio, focusGameShell]);
 
   const togglePause = useCallback(() => {
     const game = gameRef.current;
@@ -1953,28 +2024,128 @@ export default function TankarGamePage() {
       keyboardRef.current = next;
     };
 
+    const startUnlockedGame = () => {
+      const audio = ensureAudio();
+      const game = createGame("playing", mutedRef.current);
+      spawnNormalEnemies(game);
+      gameRef.current = game;
+      keyboardRef.current = copyInput(EMPTY_INPUT);
+      touchRef.current = copyInput(EMPTY_INPUT);
+      setHud(snapshot(game));
+      focusGameShell();
+      audio.play("start");
+    };
+
+    const updateRemoteCaptchaAnswer = (delta: number) => {
+      setCaptchaAnswer((prev) => {
+        const raw = Number(prev || "0");
+        const nextValue = clamp(Number.isFinite(raw) ? raw + delta : delta, -99, 999);
+        const nextText = String(Math.round(nextValue));
+        captchaAnswerRef.current = nextText;
+        return nextText;
+      });
+    };
+
+    const tryRemoteCaptchaVerify = () => {
+      const challenge = captchaRef.current;
+      if (!challenge) return;
+      const value = Number(captchaAnswerRef.current.trim());
+      if (Number.isFinite(value) && value === challenge.answer) {
+        setCaptchaVerified(true);
+        captchaVerifiedRef.current = true;
+        setCaptchaError("");
+        startUnlockedGame();
+        return;
+      }
+      setCaptchaVerified(false);
+      captchaVerifiedRef.current = false;
+      setCaptchaError("Wrong answer. Use ▲/▼ ±1 and ◀/▶ ±10, then press OK.");
+      refreshCaptcha();
+      setCaptchaAnswer("");
+      captchaAnswerRef.current = "";
+    };
+
+    const handleRemoteCaptcha = (remote: RemoteKey) => {
+      if (remote === "ArrowUp") updateRemoteCaptchaAnswer(1);
+      else if (remote === "ArrowDown") updateRemoteCaptchaAnswer(-1);
+      else if (remote === "ArrowRight") updateRemoteCaptchaAnswer(10);
+      else if (remote === "ArrowLeft") updateRemoteCaptchaAnswer(-10);
+      else if (remote === "OK") tryRemoteCaptchaVerify();
+      else if (remote === "Back" || remote === "Menu") {
+        refreshCaptcha();
+        setCaptchaAnswer("");
+        captchaAnswerRef.current = "";
+        setCaptchaError("Use TV remote: ▲/▼ ±1, ◀/▶ ±10, OK to unlock.");
+      }
+    };
+
     resize();
     window.addEventListener("resize", resize);
     window.addEventListener("orientationchange", resize);
 
     const down = (e: KeyboardEvent) => {
-      const useful = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD", "Enter", "NumpadEnter", "KeyP", "KeyM", "KeyF", "Escape", "Backspace", "MediaPlayPause", "BrowserBack", "GoBack"];
-      if (useful.includes(e.code)) e.preventDefault();
+      const remote = normalizeRemoteKey(e);
+      const usefulKeyboard = ["KeyW", "KeyA", "KeyS", "KeyD", "KeyP", "KeyM", "KeyF"];
+      const typingTarget = isTypingTarget(e.target);
+      const tvDpad = isAndroidTvDpadEvent(e);
+
+      if (typingTarget && !tvDpad) {
+        if (e.code === "Enter" || e.code === "NumpadEnter") return;
+        if (!usefulKeyboard.includes(e.code)) return;
+      }
+
+      if (isRemoteAction(remote) || usefulKeyboard.includes(e.code)) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!typingTarget) focusGameShell();
+      }
+
       ensureAudio();
-      setKeyInput(e.code, true);
+
+      if (gameRef.current.status === "idle" && !captchaVerifiedRef.current && isRemoteAction(remote) && !typingTarget) {
+        handleRemoteCaptcha(remote);
+        return;
+      }
+
+      const inputCode = remote === "Other" ? e.code : remote;
+      setKeyInput(inputCode, true);
+
+      if (isRemoteMovement(remote) && isAndroidTvDpadEvent(e)) {
+        const timers = tvReleaseTimersRef.current;
+        if (timers[remote]) window.clearTimeout(timers[remote]);
+        timers[remote] = window.setTimeout(() => setKeyInput(remote, false), 180);
+      }
+
       if (e.repeat) return;
-      if ((e.code === "Enter" || e.code === "NumpadEnter") && ["idle", "gameover", "victory"].includes(gameRef.current.status)) startGame();
-      if (e.code === "KeyP" || e.code === "MediaPlayPause") togglePause();
-      if (e.code === "Escape" || e.code === "Backspace" || e.code === "BrowserBack" || e.code === "GoBack") {
+
+      if ((remote === "OK" || e.code === "Enter" || e.code === "NumpadEnter") && ["idle", "gameover", "victory"].includes(gameRef.current.status)) {
+        if (captchaVerifiedRef.current || captchaVerified) startGame();
+        return;
+      }
+      if (remote === "OK" && gameRef.current.status === "paused") {
+        togglePause();
+        return;
+      }
+      if (e.code === "KeyP" || remote === "PlayPause" || remote === "Menu") togglePause();
+      if (remote === "Back") {
         if (gameRef.current.status === "playing" || gameRef.current.status === "paused") togglePause();
       }
-      if (e.code === "KeyM") toggleMute();
-      if (e.code === "KeyF") toggleFullscreen();
+      if (e.code === "KeyM" || remote === "Mute") toggleMute();
+      if (e.code === "KeyF" || remote === "Fullscreen") toggleFullscreen();
     };
 
-    const up = (e: KeyboardEvent) => setKeyInput(e.code, false);
-    window.addEventListener("keydown", down, { passive: false });
-    window.addEventListener("keyup", up);
+    const up = (e: KeyboardEvent) => {
+      const remote = normalizeRemoteKey(e);
+      if (isTypingTarget(e.target) && !isAndroidTvDpadEvent(e)) return;
+      const inputCode = remote === "Other" ? e.code : remote;
+      setKeyInput(inputCode, false);
+      if (isRemoteAction(remote)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", down, { passive: false, capture: true });
+    window.addEventListener("keyup", up, { passive: false, capture: true });
 
     let raf = 0;
     let last = performance.now();
@@ -2020,15 +2191,24 @@ export default function TankarGamePage() {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
       window.removeEventListener("orientationchange", resize);
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keyup", up, true);
+      for (const timer of Object.values(tvReleaseTimersRef.current)) window.clearTimeout(timer);
+      tvReleaseTimersRef.current = {};
     };
   }, [ensureAudio, startGame, toggleFullscreen, toggleMute, togglePause]);
 
   const overlayVisible = loaderReady && (hud.status === "idle" || hud.status === "paused" || hud.status === "victory" || hud.status === "gameover");
 
   return (
-    <main className="gameShell" onPointerCancel={clearTouch} onContextMenu={(e) => e.preventDefault()}>
+    <main
+      ref={shellRef}
+      className="gameShell"
+      tabIndex={0}
+      onPointerDown={(e) => { if (shouldKeepGameFocus(e.target)) focusGameShell(); }}
+      onPointerCancel={clearTouch}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <canvas ref={canvasRef} />
 
       <section className="sidePanel leftPanel" aria-label="Game status">
@@ -2058,7 +2238,7 @@ export default function TankarGamePage() {
         </div>
         <div className="panelGroup helperInfo">
           <div className="sectionTitle">Battle</div>
-          <p>Square field. 50 kills unlock the boss. Enemy tanks hunt your row or column and attack when they get a lane.</p>
+          <p>TV Remote: D-pad moves, OK starts/resumes, Back pauses. 50 kills unlock the boss.</p>
         </div>
       </section>
 
@@ -2076,7 +2256,7 @@ export default function TankarGamePage() {
         </div>
       </section>
 
-      <section className="help">Square arcade field · use movement only · player auto-fires · enemies hunt your lane · boss unlocks at 50 kills</section>
+      <section className="help">Android TV ready · D-pad moves · OK start/resume · Back pause · enemies hunt your lane</section>
       <section className="rotateHint">Rotate for best gameplay</section>
 
       {!loaderReady && (
@@ -2108,13 +2288,15 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Desktop · Mobile · Android TV</p>
                 <h1>TANKAR BATTLE</h1>
-                <p>Destroy 50 white enemy tanks, then face the red boss tank. Enemy tanks now actively hunt your lane and attack when they line up with your tank.</p>
+                <p>Destroy 50 white enemy tanks, then face the red boss tank. On Android TV, use D-pad to move, OK to start/resume, and Back to pause.</p>
                 {!captchaVerified ? (
                   <div className="captchaBox" role="group" aria-label="Math access check">
                     <strong>Math Access Check</strong>
                     <span className="captchaQuestion">{captcha.question} = ?</span>
                     <input
                       value={captchaAnswer}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setCaptchaAnswer(e.target.value.replace(/[^0-9-]/g, ""))}
                       onKeyDown={(e) => { if (e.key === "Enter") verifyCaptcha(); }}
                       inputMode="numeric"
@@ -2127,7 +2309,7 @@ export default function TankarGamePage() {
                       <button className="primary smallPrimary" onClick={verifyCaptcha}>Unlock Game</button>
                       <button className="mini lightMini" onClick={refreshCaptcha}>New Question</button>
                     </div>
-                    <small className="captchaNote">Includes addition, subtraction, multiplication and division. This is a simple access check, not a legal age verification.</small>
+                    <small className="captchaNote">TV remote: ▲/▼ changes by 1, ◀/▶ changes by 10, OK unlocks. This is a simple access check, not a legal age verification.</small>
                   </div>
                 ) : (
                   <>
@@ -2178,7 +2360,7 @@ export default function TankarGamePage() {
         button { font: inherit; user-select: none; touch-action: none; }
         button:focus-visible { outline: 3px solid #f3ead1; outline-offset: 3px; box-shadow: 0 0 0 7px rgba(250, 204, 21, 0.35); }
         .gameShell {
-          position: fixed; inset: 0; overflow: hidden; color: white; touch-action: none;
+          position: fixed; inset: 0; overflow: hidden; color: white; touch-action: none; outline: none;
           padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
           background: radial-gradient(circle at 50% 20%, rgba(255, 195, 67, 0.12), transparent 30%), radial-gradient(circle at 70% 70%, rgba(103, 232, 249, 0.08), transparent 35%), #08110f;
         }

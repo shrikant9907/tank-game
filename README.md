@@ -118,3 +118,20 @@ Repo Settings → Pages → Source → GitHub Actions
 - Main game information moved to left and right side panels instead of top and bottom bars.
 - Arena layout updated in a more classic arcade / Battle City direction.
 - Enemy tanks no longer wander as much; they actively seek the player and become aggressive when they enter the same row or column.
+
+
+## Android TV remote control fix
+
+- D-pad/remote arrow keys are captured before browser focus navigation.
+- Supports Android TV key codes: 19/20/21/22 for movement, 23/66/13 for OK, and 4/461 for Back.
+- OK starts/restarts/resumes the game.
+- Back pauses/resumes during play.
+- Remote-friendly math unlock: ▲/▼ changes answer by 1, ◀/▶ changes answer by 10, OK verifies.
+- Game shell keeps keyboard focus so browser buttons do not steal D-pad control.
+
+
+## Laptop input focus fix
+
+- Fixed game-shell focus lock stealing focus from the math input.
+- Laptop keyboard typing in the input now works normally.
+- Android TV remote D-pad support remains active when the game shell is focused.
