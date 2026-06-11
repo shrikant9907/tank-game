@@ -12,7 +12,7 @@ type Rect = { x: number; y: number; w: number; h: number };
 
 type Wall = Rect & { id: number; kind: WallKind; hp: number; maxHp: number };
 type Terrain = Rect & { id: number; kind: TerrainKind };
-type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss"; dir: Dir; speed: number; cooldown: number; aiTimer: number };
+type Tank = Rect & { id: string; kind: "player" | "enemy" | "boss"; dir: Dir; speed: number; cooldown: number; aiTimer: number; hp: number; fast?: boolean };
 type Drone = Rect & { id: string; team: "friendly" | "enemy"; speed: number; cooldown: number; angle: number; spark: number };
 type Bullet = Rect & { id: string; owner: Owner; sourceId: string; dir: Dir; speed: number; dead?: boolean };
 type Explosion = { id: string; x: number; y: number; t: number; life: number; size: number };
@@ -62,7 +62,7 @@ const WORLD_H = ROWS * CELL;
 
 const PLAYER_SIZE = 34;
 const ENEMY_SIZE = 34;
-const BOSS_SIZE = 74;
+const BOSS_SIZE = ENEMY_SIZE;
 const FRIENDLY_DRONE_SIZE = 24;
 const ENEMY_DRONE_SIZE = 54;
 
@@ -70,12 +70,14 @@ const TARGET_KILLS = 50;
 const ACTIVE_ENEMIES = 10;
 const PLAYER_LIVES = 3;
 const PLAYER_HP_PER_LIFE = 10;
-const BOSS_MAX_HP = 20;
+const BOSS_MAX_HP = 80;
 
 const PLAYER_BASE_SPEED = 285;
 const PLAYER_BOOST_SPEED = 380;
 const ENEMY_SPEED = 50;
-const BOSS_SPEED = 145;
+const ENEMY_FAST_SPEED = 128;
+const MAX_FAST_ENEMIES = 4;
+const BOSS_SPEED = 285;
 const FRIENDLY_DRONE_SPEED = 620;
 const ENEMY_DRONE_SPEED = 450;
 
@@ -95,6 +97,31 @@ const FONT: Record<string, string[]> = {
   V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
   " ": ["000", "000", "000", "000", "000", "000", "000"],
 };
+
+
+type CaptchaChallenge = { question: string; answer: number };
+
+function createCaptchaChallenge(): CaptchaChallenge {
+  const op = ["+", "-", "×", "÷"][Math.floor(Math.random() * 4)];
+  const a = 2 + Math.floor(Math.random() * 18);
+  const b = 2 + Math.floor(Math.random() * 12);
+
+  if (op === "+") {
+    const c = 1 + Math.floor(Math.random() * 9);
+    return { question: `${a} + ${b} + ${c}`, answer: a + b + c };
+  }
+  if (op === "-") {
+    const big = a + b + 10;
+    return { question: `${big} - ${b}`, answer: big - b };
+  }
+  if (op === "×") {
+    return { question: `${a} × ${b}`, answer: a * b };
+  }
+
+  const answer = 2 + Math.floor(Math.random() * 12);
+  const divisor = 2 + Math.floor(Math.random() * 9);
+  return { question: `${answer * divisor} ÷ ${divisor}`, answer };
+}
 
 function copyInput(input: InputState): InputState {
   return { up: input.up, down: input.down, left: input.left, right: input.right, fire: input.fire };
@@ -253,7 +280,7 @@ function buildWalls(): Wall[] {
 }
 
 function createPlayer(): Tank {
-  return { id: "player", kind: "player", x: WORLD_W / 2 - PLAYER_SIZE / 2, y: WORLD_H / 2 - PLAYER_SIZE / 2, w: PLAYER_SIZE, h: PLAYER_SIZE, dir: "up", speed: PLAYER_BASE_SPEED, cooldown: 0, aiTimer: 0 };
+  return { id: "player", kind: "player", x: WORLD_W / 2 - PLAYER_SIZE / 2, y: WORLD_H / 2 - PLAYER_SIZE / 2, w: PLAYER_SIZE, h: PLAYER_SIZE, dir: "up", speed: PLAYER_BASE_SPEED, cooldown: 0, aiTimer: 0, hp: 0 };
 }
 
 function createFriendlyDrones(player: Tank): Drone[] {
@@ -304,7 +331,7 @@ function createGame(status: Status = "idle", muted = false): Game {
 }
 
 function tankCollider(tank: Tank): Rect {
-  const inset = tank.kind === "boss" ? 8 : 7;
+  const inset = 6;
   return { x: tank.x + inset, y: tank.y + inset, w: tank.w - inset * 2, h: tank.h - inset * 2 };
 }
 
@@ -375,7 +402,9 @@ function spawnNormalEnemies(game: Game) {
     const p = points[(game.normalSpawned + guard) % points.length];
     const r = { x: p.gx * CELL + (CELL - ENEMY_SIZE) / 2, y: p.gy * CELL + (CELL - ENEMY_SIZE) / 2, w: ENEMY_SIZE, h: ENEMY_SIZE };
     if (!isAreaFree(game, r)) continue;
-    game.enemies.push({ id: `enemy-${game.normalSpawned + 1}`, kind: "enemy", ...r, dir: p.dir, speed: ENEMY_SPEED, cooldown: 0.8 + rand(game) * 0.7, aiTimer: 0.2 });
+    const fastCount = game.enemies.filter((e) => e.fast).length;
+    const shouldBeFast = fastCount < MAX_FAST_ENEMIES && game.normalSpawned % 5 === 0;
+    game.enemies.push({ id: `enemy-${game.normalSpawned + 1}`, kind: "enemy", ...r, dir: p.dir, speed: shouldBeFast ? ENEMY_FAST_SPEED : ENEMY_SPEED, cooldown: 0.8 + rand(game) * 0.7, aiTimer: 0.2, hp: 4, fast: shouldBeFast });
     game.normalSpawned++;
   }
 }
@@ -387,7 +416,7 @@ function spawnBoss(game: Game, audio?: ArcadeAudio | null) {
   game.message = "MASTER TANK ARRIVED";
   game.messageTimer = 2;
   game.shake = 0.5;
-  game.boss = { id: "boss", kind: "boss", x: WORLD_W / 2 - BOSS_SIZE / 2, y: CELL * 1.25, w: BOSS_SIZE, h: BOSS_SIZE, dir: "down", speed: BOSS_SPEED, cooldown: 0.25, aiTimer: 0.15 };
+  game.boss = { id: "boss", kind: "boss", x: WORLD_W / 2 - BOSS_SIZE / 2, y: CELL * 1.25, w: BOSS_SIZE, h: BOSS_SIZE, dir: "down", speed: BOSS_SPEED, cooldown: 0.12, aiTimer: 0.08, hp: BOSS_MAX_HP, fast: true };
   audio?.play("boss");
 }
 
@@ -424,9 +453,26 @@ function fireDroneBullet(game: Game, drone: Drone, target: Rect, audio?: ArcadeA
   const vertical = dir === "up" || dir === "down";
   const bw = vertical ? 5 : 12;
   const bh = vertical ? 12 : 5;
-  game.bullets.push({ id: `db-${performance.now()}-${Math.random()}`, owner: "drone", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 560 });
-  drone.cooldown = 0.13;
+  game.bullets.push({ id: `db-${performance.now()}-${Math.random()}`, owner: "drone", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 650 });
+  drone.cooldown = 0.22;
   audio?.play("spark");
+}
+
+
+function fireEnemyDroneBullet(game: Game, drone: Drone, target: Rect, audio?: ArcadeAudio | null) {
+  if (drone.cooldown > 0 || !game.enemyDrone) return;
+  const c = centerOf(drone);
+  const t = centerOf(target);
+  const dx = t.x - c.x;
+  const dy = t.y - c.y;
+  const horizontal = Math.abs(dx) > Math.abs(dy);
+  const dir: Dir = horizontal ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down";
+  const vertical = dir === "up" || dir === "down";
+  const bw = vertical ? 7 : 16;
+  const bh = vertical ? 16 : 7;
+  game.bullets.push({ id: `edb-${performance.now()}-${Math.random()}`, owner: "enemy", sourceId: drone.id, x: c.x - bw / 2, y: c.y - bh / 2, w: bw, h: bh, dir, speed: 470 });
+  drone.cooldown = 0.68;
+  audio?.play("shoot");
 }
 
 function playerIsHiddenFrom(game: Game, tank: Tank) {
@@ -572,12 +618,42 @@ function updateBullets(game: Game, dt: number, audio?: ArcadeAudio | null) {
         if (rectsOverlap(bullet, tankCollider(game.player))) { bullet.dead = true; damagePlayer(game, audio); break; }
       }
 
+      if (bullet.owner === "drone") {
+        const enemy = game.enemies.find((e) => rectsOverlap(bullet, tankCollider(e)));
+        if (enemy) {
+          bullet.dead = true;
+          enemy.hp = Math.max(0, enemy.hp - 1);
+          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 14);
+          audio?.play("hit");
+          if (enemy.hp <= 0) destroyEnemy(game, enemy.id, audio);
+          break;
+        }
+        if (game.boss && rectsOverlap(bullet, tankCollider(game.boss))) {
+          bullet.dead = true;
+          game.bossHp--;
+          game.boss.hp = game.bossHp;
+          game.shake = 0.05;
+          addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 14);
+          audio?.play("hit");
+          if (game.bossHp <= 0) {
+            addExplosion(game, game.boss.x + game.boss.w / 2, game.boss.y + game.boss.h / 2, 90, 0.55);
+            game.boss = null;
+            game.status = "victory";
+            game.message = "VICTORY";
+            game.messageTimer = 4;
+            audio?.play("win");
+          }
+          break;
+        }
+      }
+
       if (bullet.owner === "player") {
         const enemy = game.enemies.find((e) => rectsOverlap(bullet, tankCollider(e)));
         if (enemy) { bullet.dead = true; destroyEnemy(game, enemy.id, audio); break; }
         if (game.boss && rectsOverlap(bullet, tankCollider(game.boss))) {
           bullet.dead = true;
           game.bossHp--;
+          if (game.boss) game.boss.hp = game.bossHp;
           game.shake = 0.1;
           addExplosion(game, bullet.x + bullet.w / 2, bullet.y + bullet.h / 2, 18);
           audio?.play("hit");
@@ -683,6 +759,20 @@ function updatePlayer(game: Game, input: InputState, dt: number, audio?: ArcadeA
   }
 }
 
+function nearestDroneAttackTarget(game: Game, drone: Drone): Tank | null {
+  if (game.boss) return game.boss;
+  let best: Tank | null = null;
+  let bestDistance = Infinity;
+  for (const enemy of game.enemies) {
+    const d = distance(drone, enemy);
+    if (d < bestDistance) {
+      best = enemy;
+      bestDistance = d;
+    }
+  }
+  return best;
+}
+
 function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
   for (const d of game.friendlyDrones) {
     d.cooldown = Math.max(0, d.cooldown - dt);
@@ -694,16 +784,32 @@ function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
   }
 
   const threats = getThreatBullets(game);
+  const pc = centerOf(game.player);
+
+  if (game.enemyDrone) {
+    const red = game.enemyDrone;
+    const nearestFriendly = game.friendlyDrones.reduce((best, d) => distance(d, red) < distance(best, red) ? d : best, game.friendlyDrones[0]);
+    if (nearestFriendly && distance(red, nearestFriendly) < 300) {
+      const fc = centerOf(nearestFriendly);
+      moveDroneToward(red, fc.x, fc.y, dt, 0.95);
+    } else {
+      moveDroneToward(red, pc.x, pc.y, dt, 0.72);
+    }
+    if (distance(red, game.player) < 560) fireEnemyDroneBullet(game, red, game.player, audio);
+  }
+
   for (let i = 0; i < game.friendlyDrones.length; i++) {
     const drone = game.friendlyDrones[i];
     const targetBullet = threats[i] || threats[0];
     let slow = 1;
+
     if (game.enemyDrone && distance(drone, game.enemyDrone) < 82) {
-      slow = 0.45;
-      drone.spark = 0.12;
-      game.enemyDrone.spark = 0.12;
+      slow = 0.48;
+      drone.spark = 0.16;
+      game.enemyDrone.spark = 0.16;
       if (Math.floor(game.time * 16) % 7 === 0) addExplosion(game, (drone.x + game.enemyDrone.x) / 2, (drone.y + game.enemyDrone.y) / 2, 10, 0.16);
     }
+
     if (targetBullet) {
       const t = centerOf(targetBullet);
       moveDroneToward(drone, t.x, t.y, dt, slow);
@@ -712,23 +818,36 @@ function updateDrones(game: Game, dt: number, audio?: ArcadeAudio | null) {
         drone.spark = 0.24;
         addExplosion(game, t.x, t.y, 18);
         audio?.play("spark");
-      } else if (distance(drone, targetBullet) < 260) {
+      } else if (distance(drone, targetBullet) < 300) {
         fireDroneBullet(game, drone, targetBullet, audio);
       }
-    } else {
-      const pc = centerOf(game.player);
-      const angle = game.time * 3.2 + i * Math.PI;
-      moveDroneToward(drone, pc.x + Math.cos(angle) * 70, pc.y + Math.sin(angle) * 58, dt, 0.7);
+      continue;
     }
-  }
 
-  if (game.enemyDrone) {
-    const enemy = game.enemyDrone;
-    const target = threats[0] ? game.friendlyDrones[0] : game.friendlyDrones.reduce((best, d) => distance(d, enemy) < distance(best, enemy) ? d : best, game.friendlyDrones[0]);
-    if (target) {
-      const tc = centerOf(target);
-      moveDroneToward(enemy, tc.x, tc.y, dt, 0.9);
+    if (game.enemyDrone && distance(game.enemyDrone, game.player) < 340) {
+      const ec = centerOf(game.enemyDrone);
+      moveDroneToward(drone, ec.x + (i === 0 ? -22 : 22), ec.y, dt, slow);
+      if (distance(drone, game.enemyDrone) < 58) {
+        drone.spark = 0.22;
+        game.enemyDrone.spark = 0.22;
+        addExplosion(game, ec.x, ec.y, 12, 0.14);
+        audio?.play("spark");
+      }
+      continue;
     }
+
+    const attackTarget = nearestDroneAttackTarget(game, drone);
+    if (attackTarget) {
+      const tc = centerOf(attackTarget);
+      const sideOffset = i === 0 ? -42 : 42;
+      moveDroneToward(drone, tc.x + sideOffset, tc.y - 44, dt, slow * 0.86);
+      if (distance(drone, attackTarget) < 430) fireDroneBullet(game, drone, attackTarget, audio);
+      continue;
+    }
+
+    const guardX = pc.x + (i === 0 ? -86 : 86);
+    const guardY = pc.y + 48;
+    moveDroneToward(drone, guardX, guardY, dt, 0.68);
   }
 }
 
@@ -892,7 +1011,7 @@ function drawTank(ctx: CanvasRenderingContext2D, game: Game, tank: Tank, invinci
   let body = "#f3bb4b";
   let tread = "#8b5b1c";
   let top = "#ffe28a";
-  if (tank.kind === "enemy") { body = "#28c76f"; tread = "#116b3b"; top = "#a8ffd0"; }
+  if (tank.kind === "enemy") { body = tank.fast ? "#fb923c" : "#28c76f"; tread = tank.fast ? "#7c2d12" : "#116b3b"; top = tank.fast ? "#fed7aa" : "#a8ffd0"; }
   if (tank.kind === "boss") { body = "#e5314f"; tread = "#4a0c18"; top = "#ff9aad"; }
   ctx.save();
   ctx.translate(cx, cy);
@@ -932,12 +1051,12 @@ function drawDrone(ctx: CanvasRenderingContext2D, drone: Drone) {
     ctx.fillStyle = "#eff6ff";
     ctx.fillRect(-3, -3, 6, 6);
   } else {
-    ctx.fillStyle = "#4c1d95";
+    ctx.fillStyle = "#7f1d1d";
     ctx.fillRect(-drone.w / 2, -9, drone.w, 18);
     ctx.fillRect(-9, -drone.h / 2, 18, drone.h);
     ctx.fillStyle = "#ef4444";
     ctx.fillRect(-14, -14, 28, 28);
-    ctx.fillStyle = "#fee2e2";
+    ctx.fillStyle = "#fecaca";
     ctx.fillRect(-4, -4, 8, 8);
   }
   if (drone.spark > 0) {
@@ -1091,6 +1210,10 @@ export default function TankarGamePage() {
   const gameRef = useRef<Game>(createGame("idle", false));
   const [hud, setHud] = useState(snapshot(gameRef.current));
   const [loaderReady, setLoaderReady] = useState(false);
+  const [captchaVerified, setCaptchaVerified] = useState(false);
+  const [captcha, setCaptcha] = useState<CaptchaChallenge>(() => createCaptchaChallenge());
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [captchaError, setCaptchaError] = useState("");
 
   useEffect(() => {
     const timer = window.setTimeout(() => setLoaderReady(true), 1350);
@@ -1104,7 +1227,30 @@ export default function TankarGamePage() {
     return audioRef.current;
   }, []);
 
+  const refreshCaptcha = useCallback(() => {
+    setCaptcha(createCaptchaChallenge());
+    setCaptchaAnswer("");
+    setCaptchaError("");
+  }, []);
+
+  const verifyCaptcha = useCallback(() => {
+    const value = Number(captchaAnswer.trim());
+    if (Number.isFinite(value) && value === captcha.answer) {
+      setCaptchaVerified(true);
+      setCaptchaError("");
+      ensureAudio().play("start");
+      return;
+    }
+    setCaptchaVerified(false);
+    setCaptchaError("Wrong answer. Ask a parent/guardian or solve again.");
+    refreshCaptcha();
+  }, [captcha.answer, captchaAnswer, ensureAudio, refreshCaptcha]);
+
   const startGame = useCallback(() => {
+    if (!captchaVerified) {
+      setCaptchaError("Solve the math check first to unlock the game.");
+      return;
+    }
     const audio = ensureAudio();
     const game = createGame("playing", mutedRef.current);
     spawnNormalEnemies(game);
@@ -1113,7 +1259,7 @@ export default function TankarGamePage() {
     touchRef.current = copyInput(EMPTY_INPUT);
     setHud(snapshot(game));
     audio.play("start");
-  }, [ensureAudio]);
+  }, [captchaVerified, ensureAudio]);
 
   const togglePause = useCallback(() => {
     const game = gameRef.current;
@@ -1272,7 +1418,7 @@ export default function TankarGamePage() {
           <span className="assistantOk">Friendly Drones: {hud.drones}</span>
           <span className={hud.enemyDrone === "Active" ? "enemyDrone" : "assistantDown"}>Enemy Drone: {hud.enemyDrone}</span>
           {hud.boost > 0 && <span className="boost">Boost: {hud.boost.toFixed(1)}s</span>}
-          {hud.bossSpawned && <span className="boss">Boss HP: {hud.bossHp}/20</span>}
+          {hud.bossSpawned && <span className="boss">Boss HP: {hud.bossHp}/{BOSS_MAX_HP}</span>}
         </div>
         <div className="actions">
           <button onClick={toggleMute}>{hud.muted ? "Unmute" : "Mute"}</button>
@@ -1327,8 +1473,33 @@ export default function TankarGamePage() {
               <>
                 <p className="eyebrow">Desktop · Mobile · Android TV</p>
                 <h1>TANKAR BATTLE</h1>
-                <p>Destroy 50 enemy tanks, move smoothly through open grid roads and grass, use 2 super-fast drones to block bullets, then watch the missile destroy the enemy drone before the master tank arrives.</p>
-                <button className="primary" onClick={startGame} autoFocus>Start Game</button>
+                <p>Destroy 50 enemy tanks, use 2 blue drones to block bullets and attack enemies, and defeat the master tank. A parent/guardian style math check is required before play.</p>
+                {!captchaVerified ? (
+                  <div className="captchaBox" role="group" aria-label="Math access check">
+                    <strong>Math Access Check</strong>
+                    <span className="captchaQuestion">{captcha.question} = ?</span>
+                    <input
+                      value={captchaAnswer}
+                      onChange={(e) => setCaptchaAnswer(e.target.value.replace(/[^0-9-]/g, ""))}
+                      onKeyDown={(e) => { if (e.key === "Enter") verifyCaptcha(); }}
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="Enter answer"
+                      autoFocus
+                    />
+                    {captchaError && <small className="captchaError">{captchaError}</small>}
+                    <div className="captchaActions">
+                      <button className="primary smallPrimary" onClick={verifyCaptcha}>Unlock Game</button>
+                      <button className="mini lightMini" onClick={refreshCaptcha}>New Question</button>
+                    </div>
+                    <small className="captchaNote">Includes addition, subtraction, multiplication and division. This is a simple access check, not a legal age verification.</small>
+                  </div>
+                ) : (
+                  <>
+                    <p className="unlockOk">Math check passed. Game unlocked.</p>
+                    <button className="primary" onClick={startGame} autoFocus>Start Game</button>
+                  </>
+                )}
                 <nav className="policyLinks compact" aria-label="Policy links">
                   <a href="terms/">Terms</a>
                   <a href="privacy/">Privacy</a>
@@ -1427,6 +1598,25 @@ export default function TankarGamePage() {
         .policyLinks.compact { margin-top: 18px; }
         .legalNote { font-size: 11px !important; line-height: 1.55 !important; color: rgba(255,255,255,0.6) !important; margin-bottom: 0 !important; }
         @keyframes loadSweep { from { transform: scaleX(0.04); } to { transform: scaleX(1); } }
+
+        .captchaBox {
+          margin: 18px auto 18px; width: min(430px, 100%); padding: 18px; display: grid; gap: 12px;
+          border: 1px solid rgba(250,204,21,0.34); background: rgba(255,255,255,0.055); text-align: center;
+        }
+        .captchaBox strong { color: #facc15; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; }
+        .captchaQuestion { font-size: clamp(26px, 6vw, 42px); font-weight: 900; color: #fff; text-shadow: 3px 3px 0 #7f1d1d; }
+        .captchaBox input {
+          width: 100%; min-height: 54px; border: 1px solid rgba(255,255,255,0.18); background: rgba(0,0,0,0.48); color: #fff;
+          padding: 12px 14px; font: inherit; font-size: 22px; text-align: center; outline: none;
+        }
+        .captchaBox input:focus { border-color: #facc15; box-shadow: 0 0 0 4px rgba(250,204,21,0.18); }
+        .captchaError { color: #fecaca; line-height: 1.45; }
+        .captchaNote { color: rgba(255,255,255,0.6); line-height: 1.5; }
+        .captchaActions { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .smallPrimary { min-width: 150px; min-height: 48px; font-size: 12px; }
+        .lightMini { background: rgba(255,255,255,0.86); color: #07100b; }
+        .unlockOk { color: #bbf7d0 !important; font-weight: 800; margin-bottom: 14px !important; }
+
         @media (max-width: 920px), (pointer: coarse) {
           .touchControls { display: flex; }
           .help { font-size: 10px; bottom: max(8px, env(safe-area-inset-bottom)); }
